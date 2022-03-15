@@ -6,11 +6,16 @@ pub mod event;
 pub mod hash;
 pub mod signer;
 pub mod vector;
+//////// 0L ////////
+pub mod ol_vdf;
+pub mod ol_decimal;
 
 #[cfg(feature = "testing")]
 pub mod unit_test;
 
-#[cfg(feature = "testing")]
+//////// 0L ////////
+// 0L needs these to be compiled normally to use in `swarm` and integration tests.
+// #[cfg(feature = "testing")]
 pub mod debug;
 
 use move_core_types::{account_address::AccountAddress, identifier::Identifier};
@@ -31,9 +36,13 @@ pub fn all_natives(move_std_addr: AccountAddress) -> NativeFunctionTable {
         ("Vector", "pop_back", vector::native_pop),
         ("Vector", "destroy_empty", vector::native_destroy_empty),
         ("Vector", "swap", vector::native_swap),
-        #[cfg(feature = "testing")]
+        //////// 0L ////////
+        // 0L needs these to be compiled normally to use in `swarm` and integration tests.
+        // #[cfg(feature = "testing")]
         ("Debug", "print", debug::native_print),
-        #[cfg(feature = "testing")]
+        //////// 0L ////////
+        // 0L needs these to be compiled normally to use in `swarm` and integration tests.
+        // #[cfg(feature = "testing")]
         (
             "Debug",
             "print_stack_trace",
@@ -45,6 +54,12 @@ pub fn all_natives(move_std_addr: AccountAddress) -> NativeFunctionTable {
             "create_signers_for_testing",
             unit_test::native_create_signers_for_testing,
         ),
+        /////// 0L /////////
+        ("VDF", "verify", ol_vdf::native_verify),
+        ("VDF", "extract_address_from_challenge", ol_vdf::native_extract_address_from_challenge),
+        ("Decimal", "demo", ol_decimal::native_demo),
+        ("Decimal", "single", ol_decimal::native_single),
+        ("Decimal", "pair", ol_decimal::native_pair),        
     ];
     NATIVES
         .iter()

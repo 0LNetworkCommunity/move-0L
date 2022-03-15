@@ -29,6 +29,13 @@ sha2 = "0.9.3"
 sha3 = "0.9.1"
 workspace-hack = { version = "0.1", path = "../../crates/workspace-hack" }
 
+######### 0L ########
+diem-global-constants = { path = "../../config/global-constants"}
+hex = "0.4.2"
+diem-types = { path = "../../types"}
+vdf = { path="../../ol/verifiable_delay/vdf"}
+rust_decimal= { version = "1.10.3", default-features = true, features = ["maths"] }
+
 [dev-dependencies]
 move-unit-test = { path = "../tools/move-unit-test" }
 tempfile = "3.2.0"

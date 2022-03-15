@@ -127,9 +127,10 @@ fn check_and_convert_type_args_and_args(
         ));
     }
     let mut converted_args = vec![];
-    for (i, (arg, param)) in args.iter().zip(params.into_iter()).enumerate() {
+    /////// 0L /////////
+    for (i, (arg, _param)) in args.iter().zip(params.into_iter()).enumerate() {
         let local_ty = fun_env.get_local_type(i);
-        debug_assert_eq!(local_ty, param.1);
+        debug_assert_eq!(local_ty, _param.1);
 
         // NOTE: for historical reasons, we may receive `&signer` as arguments
         // TODO (mengxu): clean this up when we no longer accept `&signer` as valid arguments
