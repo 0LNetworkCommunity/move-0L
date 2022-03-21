@@ -78,9 +78,9 @@ fn read_uleb_internal<T>(cursor: &mut VersionedCursor, max: u64) -> BinaryLoader
 where
     u64: TryInto<T>,
 {
-    let x = cursor.read_uleb128_as_u64().map_err(|_| {
+    let x = cursor.read_uleb128_as_u64().map_err(|err| {
         println!("Error: Bad Uleb"); /////// 0L /////////
-        dbg!(e); /////// 0L /////////        
+        dbg!(err); /////// 0L /////////        
         PartialVMError::new(StatusCode::MALFORMED).with_message("Bad Uleb".to_string())
     })?;
     if x > max {

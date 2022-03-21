@@ -1,11 +1,10 @@
 // Copyright (c) The Libra Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 use vdf::{VDFParams, VDF};
-use diem_types::{
-    transaction::authenticator::AuthenticationKey, 
-    vm_status::{StatusCode}
-};
-
+// use diem_types::{
+//     transaction::authenticator::AuthenticationKey,
+// };
+use move_core_types::vm_status::StatusCode;
 use move_vm_runtime::native_functions::NativeContext;
 use move_vm_types::{
     gas_schedule::NativeCostIndex,
@@ -15,7 +14,6 @@ use move_vm_types::{
     values::{Reference, Value},
 };
 use std::collections::VecDeque;
-use std::convert::TryFrom;
 use move_binary_format::errors::{PartialVMError, PartialVMResult};
 // use hex;
 use diem_global_constants::VDF_SECURITY_PARAM;
@@ -60,24 +58,25 @@ pub fn native_verify(
     Ok(NativeResult::ok(cost, return_values))
 }
 
-// Extracts the first 32 bits of the vdf challenge which is the auth_key
-// Auth Keys can be turned into an AccountAddress type, to be serialized to a move address type.
-pub fn native_extract_address_from_challenge(
-    context: &mut NativeContext,
-    _ty_args: Vec<Type>,
-    mut arguments: VecDeque<Value>,
-) -> PartialVMResult<NativeResult> {
-    let cost = native_gas(context.cost_table(), NativeCostIndex::VDF_PARSE, 1);
+// 0L todo diem-1.4.1
+// // Extracts the first 32 bits of the vdf challenge which is the auth_key
+// // Auth Keys can be turned into an AccountAddress type, to be serialized to a move address type.
+// pub fn native_extract_address_from_challenge(
+//     context: &mut NativeContext,
+//     _ty_args: Vec<Type>,
+//     mut arguments: VecDeque<Value>,
+// ) -> PartialVMResult<NativeResult> {
+//     let cost = native_gas(context.cost_table(), NativeCostIndex::VDF_PARSE, 1);
 
-    let challenge_vec = pop_arg!(arguments, Reference)
-        .read_ref()?
-        .value_as::<Vec<u8>>()?;
+//     let challenge_vec = pop_arg!(arguments, Reference)
+//         .read_ref()?
+//         .value_as::<Vec<u8>>()?;
 
-    let auth_key_vec = &challenge_vec[..32];
-    let auth_key = AuthenticationKey::try_from(auth_key_vec).expect("Check length");
-    let address = auth_key.derived_address();
-    let return_values = smallvec![
-        Value::address(address), Value::vector_u8(auth_key_vec[..16].to_owned())
-    ];
-    Ok(NativeResult::ok(cost, return_values))
-}
+//     let auth_key_vec = &challenge_vec[..32];
+//     let auth_key = AuthenticationKey::try_from(auth_key_vec).expect("Check length");
+//     let address = auth_key.derived_address();
+//     let return_values = smallvec![
+//         Value::address(address), Value::vector_u8(auth_key_vec[..16].to_owned())
+//     ];
+//     Ok(NativeResult::ok(cost, return_values))
+// }
