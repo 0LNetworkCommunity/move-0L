@@ -25,7 +25,7 @@ workspace-hack = { version = "0.1", path = "../../../crates/workspace-hack" }
 # //////// 0L ////////
 # 0L todo diem-1.4.1:
 # Remove simsekgokhan and use main branch
-diem-crypto = { git = "https://github.com/simsekgokhan/libra", branch = "v6" }
+diem-crypto = { git = "https://github.com/OLSF/libra", branch = "v6" }
 
 [dev-dependencies]
 proptest = "1.0.0"
