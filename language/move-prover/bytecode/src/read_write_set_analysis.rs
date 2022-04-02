@@ -683,12 +683,14 @@ fn call_native_function(
         ("Event", "write_to_event_store") => (),
         ("Hash", "sha3_256") | ("Hash", "sha2_256") => (),
         ("Signature", "ed25519_validate_pubkey") | ("Signature", "ed25519_verify") => (),
+        /////// 0L /////////
+        ("Decimal", "demo") | ("Decimal", "single") | ("Decimal", "pair") => (),
+        /////// 0L /////////
+        ("VDF", "verify") => (),
+
         (m, f) => {
             panic!("Unsupported native function {:?}::{:?}", m, f)
         }
-        /////// 0L /////////
-        // 0L todo diem 1.4.1
-        // Add ol_vdf and ol_decimal here?        
     }
 }
 
