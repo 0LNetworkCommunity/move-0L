@@ -59,24 +59,26 @@ pub fn native_verify(
 }
 
 // // 0L todo diem-1.4.1: Cyclic dependency problem
-// // Extracts the first 32 bits of the vdf challenge which is the auth_key
-// // Auth Keys can be turned into an AccountAddress type, to be serialized to a move address type.
-// pub fn native_extract_address_from_challenge(
-//     context: &mut NativeContext,
-//     _ty_args: Vec<Type>,
-//     mut arguments: VecDeque<Value>,
-// ) -> PartialVMResult<NativeResult> {
-//     let cost = native_gas(context.cost_table(), NativeCostIndex::VDF_PARSE, 1);
+// Extracts the first 32 bits of the vdf challenge which is the auth_key
+// Auth Keys can be turned into an AccountAddress type, to be serialized to a move address type.
+pub fn native_extract_address_from_challenge(
+    context: &mut NativeContext,
+    _ty_args: Vec<Type>,
+    mut arguments: VecDeque<Value>,
+) -> PartialVMResult<NativeResult> {
+    // let cost = native_gas(context.cost_table(), NativeCostIndex::VDF_PARSE, 1);
 
-//     let challenge_vec = pop_arg!(arguments, Reference)
-//         .read_ref()?
-//         .value_as::<Vec<u8>>()?;
+    // let challenge_vec = pop_arg!(arguments, Reference)
+    //     .read_ref()?
+    //     .value_as::<Vec<u8>>()?;
 
-//     let auth_key_vec = &challenge_vec[..32];
-//     let auth_key = AuthenticationKey::new(auth_key_vec.try_into().expect("Check length"));
-//     let address = auth_key.derived_address();
-//     let return_values = smallvec![
-//         Value::address(address), Value::vector_u8(auth_key_vec[..16].to_owned())
-//     ];
-//     Ok(NativeResult::ok(cost, return_values))
-// }
+    // let auth_key_vec = &challenge_vec[..32];
+    // let auth_key = AuthenticationKey::new(auth_key_vec.try_into().expect("Check length"));
+    // let address = auth_key.derived_address();
+    // let return_values = smallvec![
+    //     Value::address(address), Value::vector_u8(auth_key_vec[..16].to_owned())
+    // ];
+    // Ok(NativeResult::ok(cost, return_values))
+
+    todo!();
+}
