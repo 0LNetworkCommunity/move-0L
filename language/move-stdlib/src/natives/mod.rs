@@ -60,7 +60,7 @@ pub fn all_natives(move_std_addr: AccountAddress) -> NativeFunctionTable {
         ("VDF", "extract_address_from_challenge", ol_vdf::native_extract_address_from_challenge),
         ("Decimal", "demo", ol_decimal::native_demo),
         ("Decimal", "single", ol_decimal::native_single),
-        ("Decimal", "pair", ol_decimal::native_pair),        
+        ("Decimal", "pair", ol_decimal::native_pair),
     ];
     NATIVES
         .iter()
