@@ -2398,7 +2398,6 @@ version = "0.0.3"
 dependencies = [
  "anyhow",
  "bcs",
- "diem-crypto",
  "hex",
  "mirai-annotations",
  "once_cell",

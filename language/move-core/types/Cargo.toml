@@ -22,8 +22,6 @@ ref-cast = "1.0.6"
 serde = { version = "1.0.124", default-features = false }
 serde_bytes = "0.11.5"
 workspace-hack = { version = "0.1", path = "../../../crates/workspace-hack" }
-# //////// 0L ////////
-diem-crypto = { git = "https://github.com/OLSF/libra", branch = "v6" }
 
 [dev-dependencies]
 proptest = "1.0.0"
