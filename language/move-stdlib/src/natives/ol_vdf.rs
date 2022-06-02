@@ -14,9 +14,6 @@ use move_vm_types::{
 };
 use std::collections::VecDeque;
 use move_binary_format::errors::{PartialVMError, PartialVMResult};
-// use hex;
-use diem_global_constants::VDF_SECURITY_PARAM;
-// const SECURITY_PARAM: u16 = 2048;
 use smallvec::smallvec;
 
 /// Rust implementation of Move's `native public fun verify(challenge: vector<u8>, 
@@ -80,6 +77,5 @@ pub fn native_extract_address_from_challenge(
     //     Value::address(address), Value::vector_u8(auth_key_vec[..16].to_owned())
     // ];
     // Ok(NativeResult::ok(cost, return_values))
-
     todo!();
 }

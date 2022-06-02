@@ -555,7 +555,7 @@ dependencies = [
 [[package]]
 name = "classgroup"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733#a31e36dfe37ff99cddff0584eff68d6cb5409733"
+source = "git+https://github.com/OLSF/libra?rev=c59b5ec242e5a1d8f3467dc254614eb28825bb30#c59b5ec242e5a1d8f3467dc254614eb28825bb30"
 dependencies = [
  "libc",
  "num-traits 0.2.14",
@@ -904,45 +904,15 @@ checksum = "850878694b7933ca4c9569d30a34b55031b9b139ee1fc7b94a527c4ef960d690"
 [[package]]
 name = "diem-crypto"
 version = "0.0.3"
-source = "git+https://github.com/OLSF/libra?branch=v6#a31e36dfe37ff99cddff0584eff68d6cb5409733"
+source = "git+https://github.com/OLSF/libra?rev=c59b5ec242e5a1d8f3467dc254614eb28825bb30#c59b5ec242e5a1d8f3467dc254614eb28825bb30"
 dependencies = [
  "aes-gcm",
  "anyhow",
  "bcs",
  "bytes",
  "curve25519-dalek-fiat",
- "diem-crypto-derive 0.0.3 (git+https://github.com/OLSF/libra?branch=v6)",
- "diem-workspace-hack 0.1.0 (git+https://github.com/OLSF/libra?branch=v6)",
- "digest 0.9.0",
- "ed25519-dalek-fiat",
- "hex",
- "hkdf",
- "mirai-annotations",
- "once_cell",
- "rand 0.8.4",
- "rand_core 0.6.3",
- "serde 1.0.136",
- "serde-name",
- "serde_bytes",
- "sha2 0.9.9",
- "static_assertions",
- "thiserror",
- "tiny-keccak",
- "x25519-dalek-fiat",
-]
-
-[[package]]
-name = "diem-crypto"
-version = "0.0.3"
-source = "git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733#a31e36dfe37ff99cddff0584eff68d6cb5409733"
-dependencies = [
- "aes-gcm",
- "anyhow",
- "bcs",
- "bytes",
- "curve25519-dalek-fiat",
- "diem-crypto-derive 0.0.3 (git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733)",
- "diem-workspace-hack 0.1.0 (git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733)",
+ "diem-crypto-derive",
+ "diem-workspace-hack",
  "digest 0.9.0",
  "ed25519-dalek-fiat",
  "hex",
@@ -964,48 +934,32 @@ dependencies = [
 [[package]]
 name = "diem-crypto-derive"
 version = "0.0.3"
-source = "git+https://github.com/OLSF/libra?branch=v6#a31e36dfe37ff99cddff0584eff68d6cb5409733"
+source = "git+https://github.com/OLSF/libra?rev=c59b5ec242e5a1d8f3467dc254614eb28825bb30#c59b5ec242e5a1d8f3467dc254614eb28825bb30"
 dependencies = [
- "diem-workspace-hack 0.1.0 (git+https://github.com/OLSF/libra?branch=v6)",
+ "diem-workspace-hack",
  "proc-macro2 1.0.36",
  "quote 1.0.17",
  "syn 1.0.90",
 ]
-
-[[package]]
-name = "diem-crypto-derive"
-version = "0.0.3"
-source = "git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733#a31e36dfe37ff99cddff0584eff68d6cb5409733"
-dependencies = [
- "diem-workspace-hack 0.1.0 (git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733)",
- "proc-macro2 1.0.36",
- "quote 1.0.17",
- "syn 1.0.90",
-]
-
-[[package]]
-name = "diem-global-constants"
-version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733#a31e36dfe37ff99cddff0584eff68d6cb5409733"
 
 [[package]]
 name = "diem-types"
 version = "0.0.3"
-source = "git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733#a31e36dfe37ff99cddff0584eff68d6cb5409733"
+source = "git+https://github.com/OLSF/libra?rev=c59b5ec242e5a1d8f3467dc254614eb28825bb30#c59b5ec242e5a1d8f3467dc254614eb28825bb30"
 dependencies = [
  "aes-gcm",
  "anyhow",
  "bcs",
  "bytes",
  "chrono",
- "diem-crypto 0.0.3 (git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733)",
- "diem-crypto-derive 0.0.3 (git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733)",
- "diem-workspace-hack 0.1.0 (git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733)",
+ "diem-crypto",
+ "diem-crypto-derive",
+ "diem-workspace-hack",
  "hex",
  "itertools",
  "mirai-annotations",
- "move-core-types 0.0.3 (git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce)",
- "move-read-write-set-types 0.0.3 (git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce)",
+ "move-core-types 0.0.3 (git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a)",
+ "move-read-write-set-types 0.0.3 (git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a)",
  "once_cell",
  "rand 0.8.4",
  "serde 1.0.136",
@@ -1019,61 +973,7 @@ dependencies = [
 [[package]]
 name = "diem-workspace-hack"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?branch=v6#a31e36dfe37ff99cddff0584eff68d6cb5409733"
-dependencies = [
- "Inflector",
- "anyhow",
- "backtrace",
- "bitvec",
- "byteorder",
- "bytes",
- "cc",
- "chrono",
- "clap",
- "crossbeam-channel",
- "crossbeam-deque",
- "crossbeam-queue",
- "crossbeam-utils",
- "either",
- "futures",
- "futures-channel",
- "futures-core",
- "futures-io",
- "futures-sink",
- "futures-util",
- "hyper",
- "indexmap",
- "itertools",
- "libc",
- "log",
- "memchr",
- "num-integer",
- "num-traits 0.2.14",
- "plotters",
- "rand 0.8.4",
- "regex",
- "regex-automata",
- "reqwest",
- "rusty-fork",
- "serde 1.0.136",
- "serde_json",
- "standback",
- "subtle",
- "syn 1.0.90",
- "tiny-keccak",
- "tokio",
- "tokio-util 0.6.10",
- "toml",
- "tracing",
- "url",
- "warp",
- "zeroize",
-]
-
-[[package]]
-name = "diem-workspace-hack"
-version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733#a31e36dfe37ff99cddff0584eff68d6cb5409733"
+source = "git+https://github.com/OLSF/libra?rev=c59b5ec242e5a1d8f3467dc254614eb28825bb30#c59b5ec242e5a1d8f3467dc254614eb28825bb30"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -2315,16 +2215,16 @@ dependencies = [
 [[package]]
 name = "move-binary-format"
 version = "0.0.3"
-source = "git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce#087148a083076ddbb8b55ed0db343d235ab27cce"
+source = "git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a#ab8d1dc313b747f813ecc42a388edc198311f14a"
 dependencies = [
  "anyhow",
  "mirai-annotations",
- "move-core-types 0.0.3 (git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce)",
+ "move-core-types 0.0.3 (git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a)",
  "once_cell",
  "ref-cast",
  "serde 1.0.136",
  "variant_count",
- "workspace-hack 0.1.0 (git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce)",
+ "workspace-hack 0.1.0 (git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a)",
 ]
 
 [[package]]
@@ -2510,11 +2410,10 @@ dependencies = [
 [[package]]
 name = "move-core-types"
 version = "0.0.3"
-source = "git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce#087148a083076ddbb8b55ed0db343d235ab27cce"
+source = "git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a#ab8d1dc313b747f813ecc42a388edc198311f14a"
 dependencies = [
  "anyhow",
  "bcs",
- "diem-crypto 0.0.3 (git+https://github.com/OLSF/libra?branch=v6)",
  "hex",
  "mirai-annotations",
  "once_cell",
@@ -2522,7 +2421,7 @@ dependencies = [
  "ref-cast",
  "serde 1.0.136",
  "serde_bytes",
- "workspace-hack 0.1.0 (git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce)",
+ "workspace-hack 0.1.0 (git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a)",
 ]
 
 [[package]]
@@ -2845,13 +2744,13 @@ dependencies = [
 [[package]]
 name = "move-read-write-set-types"
 version = "0.0.3"
-source = "git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce#087148a083076ddbb8b55ed0db343d235ab27cce"
+source = "git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a#ab8d1dc313b747f813ecc42a388edc198311f14a"
 dependencies = [
  "anyhow",
- "move-binary-format 0.0.3 (git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce)",
- "move-core-types 0.0.3 (git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce)",
+ "move-binary-format 0.0.3 (git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a)",
+ "move-core-types 0.0.3 (git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a)",
  "serde 1.0.136",
- "workspace-hack 0.1.0 (git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce)",
+ "workspace-hack 0.1.0 (git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a)",
 ]
 
 [[package]]
@@ -2924,7 +2823,6 @@ dependencies = [
 name = "move-stdlib"
 version = "0.1.0"
 dependencies = [
- "diem-global-constants",
  "diem-types",
  "dir-diff",
  "file_diff",
@@ -5617,7 +5515,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "vdf"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=a31e36dfe37ff99cddff0584eff68d6cb5409733#a31e36dfe37ff99cddff0584eff68d6cb5409733"
+source = "git+https://github.com/OLSF/libra?rev=c59b5ec242e5a1d8f3467dc254614eb28825bb30#c59b5ec242e5a1d8f3467dc254614eb28825bb30"
 dependencies = [
  "bit-vec 0.5.1",
  "classgroup",
@@ -5983,7 +5881,7 @@ dependencies = [
 [[package]]
 name = "workspace-hack"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/move-0L?rev=087148a083076ddbb8b55ed0db343d235ab27cce#087148a083076ddbb8b55ed0db343d235ab27cce"
+source = "git+https://github.com/OLSF/move-0L?rev=ab8d1dc313b747f813ecc42a388edc198311f14a#ab8d1dc313b747f813ecc42a388edc198311f14a"
 dependencies = [
  "arrayvec 0.5.2",
  "block-buffer 0.9.0",
