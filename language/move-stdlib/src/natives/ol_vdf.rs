@@ -1,8 +1,6 @@
 // Copyright (c) The Libra Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 use vdf::{VDFParams, VDF};
-use diem_types::transaction::authenticator::AuthenticationKey;
-use std::convert::TryInto;
 use move_core_types::{vm_status::StatusCode, account_address::AccountAddress};
 use move_vm_runtime::native_functions::NativeContext;
 use move_vm_types::{
@@ -57,23 +55,29 @@ pub fn native_verify(
 }
 
 // Extracts the first 32 bits of the vdf challenge which is the auth_key
-// Auth Keys can be turned into an AccountAddress type, to be serialized to a move address type.
+// Auth Keys can be turned into an AccountAddress type, to be serialized to 
+// a move address type.
 pub fn native_extract_address_from_challenge(
     context: &mut NativeContext,
     _ty_args: Vec<Type>,
     mut arguments: VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
-    let cost = native_gas(context.cost_table(), NativeCostIndex::VDF_PARSE, 1);
+    let challenge_vec = pop_arg!(arguments, Reference).read_ref()?.value_as::<Vec<u8>>()?;
 
-    let challenge_vec = pop_arg!(arguments, Reference)
-        .read_ref()?
-        .value_as::<Vec<u8>>()?;
+    // We want to use Diem AuthenticationKey::derived_address() here but this creates 
+    // libra (and as a result cyclic) dependency which we definitely do not want
+    const AUTHENTICATION_KEY_LENGTH: usize = 32;
+    let auth_key_vec = &challenge_vec[..AUTHENTICATION_KEY_LENGTH];
+    // Address derived from the last `AccountAddress::LENGTH` bytes of authentication key
+    let mut array = [0u8; AccountAddress::LENGTH];
+    array.copy_from_slice(
+        &auth_key_vec[AUTHENTICATION_KEY_LENGTH - AccountAddress::LENGTH..]
+    );
+    let address = AccountAddress::new(array);
 
-    let auth_key_vec = &challenge_vec[..32];
-    let auth_key = AuthenticationKey::new(auth_key_vec.try_into().expect("Check length"));
-    let address = AccountAddress::new(auth_key.derived_address().into_bytes());
     let return_values = smallvec![
         Value::address(address), Value::vector_u8(auth_key_vec[..16].to_owned())
     ];
+    let cost = native_gas(context.cost_table(), NativeCostIndex::VDF_PARSE, 1);
     Ok(NativeResult::ok(cost, return_values))
 }

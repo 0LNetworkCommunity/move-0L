@@ -31,9 +31,7 @@ workspace-hack = { version = "0.1", path = "../../crates/workspace-hack" }
 
 ######### 0L ########
 hex = "0.4.2"
-diem-types = { git = "https://github.com/OLSF/libra", rev = "c59b5ec242e5a1d8f3467dc254614eb28825bb30" }
-vdf = { git = "https://github.com/OLSF/libra", rev = "c59b5ec242e5a1d8f3467dc254614eb28825bb30" }
-# vdf = { path="../../ol/verifiable_delay/vdf"}
+vdf = { git = "https://github.com/OLSF/libra", rev = "aa1731ee1442c211b5f7a80bcb238fbc25b47408" }
 rust_decimal= { version = "1.10.3", default-features = true, features = ["maths"] }
 
 [dev-dependencies]
