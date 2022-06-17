@@ -685,9 +685,8 @@ fn call_native_function(
         ("Signature", "ed25519_validate_pubkey") | ("Signature", "ed25519_verify") => (),
         /////// 0L /////////
         ("Decimal", "demo") | ("Decimal", "single") | ("Decimal", "pair") => (),
-        /////// 0L /////////
-        ("VDF", "verify") => (),
-
+        ("VDF", "verify") | ("VDF", "extract_address_from_challenge") => (),
+        ("Debug", "print") => (),
         (m, f) => {
             panic!("Unsupported native function {:?}::{:?}", m, f)
         }
