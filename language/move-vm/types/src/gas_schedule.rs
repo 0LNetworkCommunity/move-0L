@@ -426,7 +426,10 @@ pub static INITIAL_GAS_SCHEDULE: Lazy<CostTable> = Lazy::new(|| {
         //////// 0L ////////
         (N::VDF_VERIFY, GasCost::new(1000000, 1)), // one second of cost.
         (N::VDF_PARSE, GasCost::new(100, 1)),
-        (N::DECIMAL, GasCost::new(52, 1)),        
+        (N::DECIMAL, GasCost::new(52, 1)),
+        (N::KECCAK_256, GasCost::new(64, 1)),
+        (N::ETH_SIGNATURE_RECOVER, GasCost::new(3000, 1)), // ERECOVER cost
+        (N::ETH_SIGNATURE_VERIFY, GasCost::new(3000, 1)),  // ERECOVER cost        
     ];
     native_table.sort_by_key(|cost| cost.0 as u64);
     let raw_native_table = native_table
@@ -477,5 +480,8 @@ pub enum NativeCostIndex {
     //////// 0L ////////
     VDF_VERIFY = 18,
     VDF_PARSE = 19,
-    DECIMAL = 20,    
+    DECIMAL = 20,
+    KECCAK_256 = 21,
+    ETH_SIGNATURE_RECOVER = 22,
+    ETH_SIGNATURE_VERIFY = 23,    
 }

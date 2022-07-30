@@ -9,6 +9,8 @@ pub mod vector;
 //////// 0L ////////
 pub mod ol_vdf;
 pub mod ol_decimal;
+pub mod ol_hash;
+pub mod ol_eth_signature;
 
 #[cfg(feature = "testing")]
 pub mod unit_test;
@@ -60,6 +62,9 @@ pub fn all_natives(move_std_addr: AccountAddress) -> NativeFunctionTable {
         ("Decimal", "demo", ol_decimal::native_demo),
         ("Decimal", "single", ol_decimal::native_single),
         ("Decimal", "pair", ol_decimal::native_pair),
+        ("XHash", "keccak_256", ol_hash::native_keccak_256),
+        ("EthSignature", "recover", ol_eth_signature::native_recover),
+        ("EthSignature", "verify", ol_eth_signature::native_verify),
     ];
     NATIVES
         .iter()
