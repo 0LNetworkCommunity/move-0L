@@ -35,6 +35,8 @@ vdf = { git = "https://github.com/OLSF/libra", rev = "aa1731ee1442c211b5f7a80bcb
 rust_decimal= { version = "1.10.3", default-features = true, features = ["maths"] }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 ethers = {version = "0.1.3"}
+diem-metrics = { git = "https://github.com/OLSF/libra", rev = "aa1731ee1442c211b5f7a80bcb238fbc25b47408" }
+once_cell = "1.7.2"
 
 [dev-dependencies]
 move-unit-test = { path = "../tools/move-unit-test" }

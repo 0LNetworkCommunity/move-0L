@@ -8,6 +8,7 @@ pub mod signer;
 pub mod vector;
 //////// 0L ////////
 pub mod ol_vdf;
+pub mod ol_counters;
 pub mod ol_decimal;
 pub mod ol_hash;
 pub mod ol_eth_signature;
