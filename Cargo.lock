@@ -526,7 +526,7 @@ dependencies = [
 [[package]]
 name = "classgroup"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=aa1731ee1442c211b5f7a80bcb238fbc25b47408#aa1731ee1442c211b5f7a80bcb238fbc25b47408"
+source = "git+https://github.com/OLSF/libra?rev=df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0#df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0"
 dependencies = [
  "libc",
  "num-traits 0.2.14",
@@ -860,7 +860,7 @@ checksum = "850878694b7933ca4c9569d30a34b55031b9b139ee1fc7b94a527c4ef960d690"
 [[package]]
 name = "diem-infallible"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=aa1731ee1442c211b5f7a80bcb238fbc25b47408#aa1731ee1442c211b5f7a80bcb238fbc25b47408"
+source = "git+https://github.com/OLSF/libra?rev=df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0#df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0"
 dependencies = [
  "diem-workspace-hack",
 ]
@@ -868,7 +868,7 @@ dependencies = [
 [[package]]
 name = "diem-log-derive"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=aa1731ee1442c211b5f7a80bcb238fbc25b47408#aa1731ee1442c211b5f7a80bcb238fbc25b47408"
+source = "git+https://github.com/OLSF/libra?rev=df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0#df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0"
 dependencies = [
  "diem-workspace-hack",
  "proc-macro2 1.0.36",
@@ -879,7 +879,7 @@ dependencies = [
 [[package]]
 name = "diem-logger"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=aa1731ee1442c211b5f7a80bcb238fbc25b47408#aa1731ee1442c211b5f7a80bcb238fbc25b47408"
+source = "git+https://github.com/OLSF/libra?rev=df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0#df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0"
 dependencies = [
  "backtrace",
  "chrono",
@@ -899,7 +899,7 @@ dependencies = [
 [[package]]
 name = "diem-metrics"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=aa1731ee1442c211b5f7a80bcb238fbc25b47408#aa1731ee1442c211b5f7a80bcb238fbc25b47408"
+source = "git+https://github.com/OLSF/libra?rev=df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0#df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0"
 dependencies = [
  "anyhow",
  "diem-logger",
@@ -916,7 +916,7 @@ dependencies = [
 [[package]]
 name = "diem-metrics-core"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=aa1731ee1442c211b5f7a80bcb238fbc25b47408#aa1731ee1442c211b5f7a80bcb238fbc25b47408"
+source = "git+https://github.com/OLSF/libra?rev=df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0#df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0"
 dependencies = [
  "diem-workspace-hack",
  "prometheus",
@@ -925,7 +925,7 @@ dependencies = [
 [[package]]
 name = "diem-workspace-hack"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=aa1731ee1442c211b5f7a80bcb238fbc25b47408#aa1731ee1442c211b5f7a80bcb238fbc25b47408"
+source = "git+https://github.com/OLSF/libra?rev=df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0#df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -5969,7 +5969,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "vdf"
 version = "0.1.0"
-source = "git+https://github.com/OLSF/libra?rev=aa1731ee1442c211b5f7a80bcb238fbc25b47408#aa1731ee1442c211b5f7a80bcb238fbc25b47408"
+source = "git+https://github.com/OLSF/libra?rev=df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0#df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0"
 dependencies = [
  "bit-vec 0.5.1",
  "classgroup",
