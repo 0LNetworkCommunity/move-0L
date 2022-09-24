@@ -1,9 +1,15 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Wrapper around the boogie program. Allows to call boogie and analyze the output.
 
-use std::{collections::BTreeMap, fs, num::ParseIntError, option::Option::None};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    num::ParseIntError,
+    option::Option::None,
+};
 
 use anyhow::anyhow;
 use codespan::{ByteIndex, ColumnIndex, LineIndex, Location, Span};
@@ -19,7 +25,8 @@ use move_binary_format::file_format::FunctionDefinitionIndex;
 use move_model::{
     ast::TempIndex,
     code_writer::CodeWriter,
-    model::{FunId, GlobalEnv, Loc, ModuleId, NodeId, QualifiedId, StructId},
+    model::{FunId, GlobalEnv, Loc, ModuleId, NodeId, QualifiedId, StructEnv},
+    pragmas::INTRINSIC_TYPE_MAP,
     ty::{PrimitiveType, Type},
 };
 use move_stackless_bytecode::function_target_pipeline::{FunctionTargetsHolder, FunctionVariant};
@@ -27,7 +34,7 @@ use move_stackless_bytecode::function_target_pipeline::{FunctionTargetsHolder, F
 // DEBUG
 // use backtrace::Backtrace;
 use crate::{
-    boogie_helpers::boogie_struct_name,
+    boogie_helpers::{boogie_inst_suffix, boogie_struct_name},
     options::{BoogieOptions, VectorTheory},
     prover_task_runner::{ProverTaskRunner, RunBoogieWithSeeds},
 };
@@ -89,6 +96,8 @@ pub enum TraceEntry {
     Abort(QualifiedId<FunId>, ModelValue),
     Exp(NodeId, ModelValue),
     SubExp(NodeId, ModelValue),
+    GlobalMem(NodeId, ModelValue),
+    InfoLine(String),
 }
 
 // Error message matching
@@ -272,6 +281,7 @@ impl<'env> BoogieWrapper<'env> {
             };
 
             let mut subexp_map = BTreeMap::new();
+            let mut global_mem_map = BTreeMap::new();
             for entry in &error.execution_trace {
                 use TraceEntry::*;
                 if abort_in_progress.is_some() && !matches!(entry, Exp(..)) {
@@ -357,6 +367,29 @@ impl<'env> BoogieWrapper<'env> {
                             subexp_map.insert(denotation.to_string(), (*node_id, value.clone()));
                         }
                     }
+                    GlobalMem(node_id, ModelValue::List(elems)) => {
+                        // The bytecode track_global_memory takes the form
+                        // "($Memory_107864 |T@[Int]Bool!val!2| |T@[Int]$1_DiemTimestamp_CurrentTimeMicroseconds!val!0|)"
+                        // so the extracted list has three values where elems[2] is the reference to the model
+                        // of the corresponding global memory array while elems[1] is the reference to the array to denote
+                        // whether the memory exists
+                        if elems.len() == 3 {
+                            if let ModelValue::Literal(s) = &elems[2] {
+                                // Extract the struct name from elems[2]
+                                // e.g., $1_DiemTimestamp_CurrentTimeMicroseconds
+                                let struct_name_str =
+                                    &s[s.find('_').unwrap() + 1..s.find('!').unwrap()];
+                                global_mem_map.insert(
+                                    struct_name_str.to_string(),
+                                    (*node_id, elems[1].clone(), elems[2].clone()),
+                                );
+                            }
+                        }
+                    }
+                    InfoLine(info_line) => {
+                        // information that should be displayed to the user
+                        display.push(format!("    {}", info_line));
+                    }
                     _ => {}
                 }
             }
@@ -389,6 +422,31 @@ impl<'env> BoogieWrapper<'env> {
                 display.push("Execution Trace:".to_string());
                 display.append(&mut trace_display)
             }
+
+            // Inject information about the global memory of the function where this failure happens
+            if !global_mem_map.is_empty() {
+                let mut trace_display = std::mem::take(&mut display);
+                display.push("Related Global Memory: ".to_string());
+                // Extract the domain information from the model
+                // Each memory slot has a corresponding domain flag
+                // Print the slot when the flag is set to true
+                let domain_info = extract_domain(error.model.as_ref().unwrap());
+                for (struct_name_str, (id, domain_value, mem_value)) in global_mem_map {
+                    let ty = self.env.get_node_type(id);
+                    let pretty = mem_value
+                        .pretty_mem(
+                            self,
+                            &domain_value,
+                            &domain_info,
+                            error.model.as_ref().unwrap(),
+                            &ty,
+                        )
+                        .unwrap();
+                    display.extend(self.make_mem_entry(struct_name_str, pretty));
+                }
+                display.append(&mut trace_display)
+            }
+
             diag = diag.with_notes(display);
         }
         self.env.add_diag(diag);
@@ -415,6 +473,18 @@ impl<'env> BoogieWrapper<'env> {
             PrettyDoc::text(var_name)
                 .append(PrettyDoc::space())
                 .append(PrettyDoc::text("="))
+                .append(PrettyDoc::line().append(value).nest(2).group()),
+        )
+        .lines()
+        .map(|s| "        ".to_string() + s)
+        .collect()
+    }
+
+    fn make_mem_entry(&self, var_name: String, value: PrettyDoc) -> Vec<String> {
+        self.render(
+            PrettyDoc::text("Resource name: ".to_string() + &var_name)
+                .append(PrettyDoc::space())
+                .append(PrettyDoc::line().append(PrettyDoc::text("Values: ")))
                 .append(PrettyDoc::line().append(value).nest(2).group()),
         )
         .lines()
@@ -459,9 +529,18 @@ impl<'env> BoogieWrapper<'env> {
 
             let args = cap.name("args").unwrap().as_str();
             let loc = self.report_error(self.extract_loc(args), self.env.unknown_loc());
-            let execution_trace = self.extract_augmented_trace(out, &mut at);
+            let plain_trace = self.extract_execution_trace(out, &mut at);
+            let mut execution_trace = self.extract_augmented_trace(out, &mut at);
             let mut model = Model::new(self);
-            self.extract_model(&mut model, out, &mut at);
+            if execution_trace.is_empty() {
+                execution_trace.push(TraceEntry::InfoLine(format!(
+                    "Boogie does not return any augmented executed trace. \
+                    See the plain trace below:\n{}",
+                    plain_trace.join("\n")
+                )))
+            } else {
+                self.extract_model(&mut model, out, &mut at);
+            }
 
             if msg != "expected to fail" {
                 // Only add this if it is not a negative test. We still needed to parse it.
@@ -495,7 +574,12 @@ impl<'env> BoogieWrapper<'env> {
 
         if let Some(cap) = MODEL_REGION.captures(&out[*at..]) {
             *at = usize::saturating_add(*at, cap.get(0).unwrap().end());
-            match model.parse(self, cap.name("mod").unwrap().as_str()) {
+
+            // Cuts out the state info block which is not used currently.
+            let re = Regex::new(r"(?m)\*\*\* STATE(?s:.)*?\*\*\* END_STATE\n").unwrap();
+            let remnant = re.replace(cap.name("mod").unwrap().as_str(), "");
+
+            match model.parse(self, remnant.as_ref()) {
                 Ok(_) => {}
                 Err(parse_error) => {
                     let context_module = self
@@ -509,6 +593,27 @@ impl<'env> BoogieWrapper<'env> {
                 }
             }
         }
+    }
+
+    /// Extracts the plain execution trace.
+    fn extract_execution_trace(&self, out: &str, at: &mut usize) -> Vec<String> {
+        static TRACE_START: Lazy<Regex> =
+            Lazy::new(|| Regex::new(r"(?m)^Execution trace:\s*$").unwrap());
+        static TRACE_ENTRY: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"^\s+(?P<name>[^(]+)\((?P<args>[^)]*)\): (?P<value>.*)\n").unwrap()
+        });
+        let mut result = vec![];
+        if let Some(m) = TRACE_START.find(&out[*at..]) {
+            *at = usize::saturating_add(*at, m.end());
+            while let Some(cap) = TRACE_ENTRY.captures(&out[*at..]) {
+                *at = usize::saturating_add(*at, cap.get(0).unwrap().end());
+                let name = cap.name("name").unwrap().as_str();
+                let args = cap.name("args").unwrap().as_str();
+                let value = cap.name("value").unwrap().as_str();
+                result.push(format!("{}({}): {}", name, args, value))
+            }
+        }
+        result
     }
 
     /// Extracts augmented execution trace.
@@ -579,6 +684,15 @@ impl<'env> BoogieWrapper<'env> {
                 let value = self.extract_value(value)?;
                 Ok(TraceEntry::SubExp(node_id, value))
             }
+            "track_global_mem" => {
+                let node_id = self.extract_node_id(args)?;
+                let value = self.extract_value(value)?;
+                Ok(TraceEntry::GlobalMem(node_id, value))
+            }
+            "info" => match value {
+                Some(info_line) => Ok(TraceEntry::InfoLine(info_line.trim().to_string())),
+                None => Ok(TraceEntry::InfoLine("".to_string())),
+            },
             _ => Err(ModelParseError::new(&format!(
                 "unrecognized augmented trace entry `{}`",
                 name
@@ -723,6 +837,121 @@ fn make_position(line_str: &str, col_str: &str) -> Location {
     Location::new(LineIndex(line), ColumnIndex(col))
 }
 
+fn deduct_table_name(map_key: &str) -> Option<String> {
+    // The generic representation of map keys is `|T@[Int]<X>!val!0` where `<X>` is the
+    // vector element type.
+    let i = map_key.find(']')?;
+    let j = map_key.find('!')?;
+    let suffix = &map_key[i + 1..j];
+    Some(format!("Select__T@[Int]{}_", suffix))
+}
+
+fn deduct_update_table_name(map_key: &str) -> Option<String> {
+    let i = map_key.find(']')?;
+    let j = map_key.find('!')?;
+    let suffix = &map_key[i + 1..j];
+    Some(format!("Store__T@[Int]{}_", suffix))
+}
+
+/// Transpose the domain map in the model by aggregating values in it by the key into a standalone map
+fn create_domain_map(
+    model_map: &BTreeMap<ModelValue, ModelValue>,
+    update_map_opt: Option<&BTreeMap<ModelValue, ModelValue>>,
+) -> Option<(
+    BTreeMap<ModelValue, BTreeMap<usize, bool>>,
+    Option<ModelValue>,
+    bool,
+)> {
+    let mut map: BTreeMap<ModelValue, BTreeMap<usize, bool>> = BTreeMap::new();
+
+    let mut default_domain = None;
+
+    let mut insert_map = |elems: &Vec<ModelValue>, val: &ModelValue| -> Option<()> {
+        map.entry(elems[0].clone()).or_insert_with(BTreeMap::new);
+        map.get_mut(&elems[0])
+            .unwrap()
+            .insert(elems[1].extract_number()?, extract_bool(val)?);
+        Some(())
+    };
+
+    // Each entry in model_map takes the form:
+    // key: |T@[Int]Bool!val!3| 153
+    // value: true
+    // elems[1] is the index of the array
+    // value represents whether the memory indexed by elems[1] exists
+    let mut default = false;
+    for (key, value) in model_map {
+        if let ModelValue::List(elems) = key {
+            if elems.len() == 2 {
+                insert_map(elems, value);
+            }
+        } else if let ModelValue::Literal(_) = key {
+            default = extract_bool(value)?;
+        }
+    }
+
+    // Each entry in update_map takes the form:
+    // |T@[Int]Bool!val!2| 0 true -> |T@[Int]Bool!val!3|
+    // else -> |T@[Int]Bool!val!3|
+    if let Some(update_map) = update_map_opt {
+        for (key, value) in update_map {
+            if let ModelValue::List(elems) = key {
+                if elems.len() == 3 {
+                    insert_map(elems, &elems[2]);
+                }
+            } else {
+                default_domain = Some(value.clone());
+            }
+        }
+    }
+
+    // map: mapping from memory slot to the domain flag
+    // default_domain: used when the slot is not in the domain map, extracted from the update_map
+    // default: default value in the domain map
+    Some((map, default_domain, default))
+}
+
+/// Extract domain from the model
+fn extract_domain(
+    model: &Model,
+) -> Option<(
+    BTreeMap<ModelValue, BTreeMap<usize, bool>>,
+    Option<ModelValue>,
+    bool,
+)> {
+    let domain_table_name = "]Bool!".to_string();
+
+    // Retrieve the domain map in the model
+    let domain_map = model
+        .vars
+        .get(&ModelValue::literal(&deduct_table_name(
+            &domain_table_name,
+        )?))?
+        .extract_map()?;
+
+    // Retrieve update of the domain map in the model
+    let domain_update_map_opt = model
+        .vars
+        .get(&ModelValue::literal(&deduct_update_table_name(
+            &domain_table_name,
+        )?))
+        .and_then(|update_map| update_map.extract_map());
+
+    create_domain_map(domain_map, domain_update_map_opt)
+}
+
+/// extract boolean value from ModelValue
+fn extract_bool(value: &ModelValue) -> Option<bool> {
+    let bool_value = value.extract_literal()?;
+    if bool_value == "true" {
+        Some(true)
+    } else if bool_value == "false" {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 // -----------------------------------------------
 // # Boogie Model Analysis
 
@@ -782,6 +1011,16 @@ pub struct ModelValueVector {
     values: BTreeMap<usize, ModelValue>,
     /// Others in this range have assigned this value.
     default: ModelValue,
+}
+
+#[derive(Debug)]
+pub struct ModelValueTable {
+    /// The known keys. This might be more than we know a value for.
+    keys: BTreeSet<usize>,
+    /// The known value assignments
+    values: BTreeMap<usize, ModelValue>,
+    /// Whether the table is open, i.e. has more entries than the model determined.
+    open: bool,
 }
 
 impl ModelValue {
@@ -845,9 +1084,9 @@ impl ModelValue {
             let map_key = &args[0];
             let value_array_map = model
                 .vars
-                .get(&ModelValue::literal(
-                    &self.deduct_table_name(map_key.extract_literal()?)?,
-                ))?
+                .get(&ModelValue::literal(&deduct_table_name(
+                    map_key.extract_literal()?,
+                )?))?
                 .extract_map()?;
             let mut values = BTreeMap::new();
             let mut default = ModelValue::error();
@@ -870,13 +1109,133 @@ impl ModelValue {
         }
     }
 
-    fn deduct_table_name(&self, map_key: &str) -> Option<String> {
-        // The generic representation of map keys is `|T@[Int]<X>!val!0` where `<X>` is the
-        // vector element type.
-        let i = map_key.find(']')?;
-        let j = map_key.find('!')?;
-        let suffix = &map_key[i + 1..j];
-        Some(format!("Select__T@[Int]{}_", suffix))
+    /// Extracts a table from a model value.
+    fn extract_table(
+        &self,
+        model: &Model,
+        _key_ty: &Type,
+        _val_ty: &Type,
+    ) -> Option<ModelValueTable> {
+        let args = self.extract_list_ctor_prefix("Table_")?;
+        if args.len() != 3 {
+            return None;
+        }
+        let (val_map, _val_default) = args[0].extract_select_int_map(model)?;
+        let (dom_map, dom_default) = args[1].extract_select_int_map(model)?;
+        let size = args[2].extract_number()?;
+        let key_exists_by_default = extract_bool(&dom_default).unwrap_or(false);
+        let mut keys = BTreeSet::new();
+        let mut values = BTreeMap::new();
+        for (key, exists) in dom_map {
+            if extract_bool(&exists).unwrap_or(false) {
+                keys.insert(key);
+            }
+        }
+        for (key, value) in val_map {
+            if key_exists_by_default {
+                keys.insert(key);
+            }
+            if keys.contains(&key) {
+                values.insert(key, value);
+            }
+        }
+        let open = values.len() < size;
+        Some(ModelValueTable { keys, values, open })
+    }
+
+    /// Extract memory content from the model
+    fn extract_mem_vector(
+        &self,
+        model: &Model,
+        domain: &ModelValue,
+        domain_info_opt: &Option<(
+            BTreeMap<ModelValue, BTreeMap<usize, bool>>,
+            Option<ModelValue>,
+            bool,
+        )>,
+    ) -> Option<ModelValueVector> {
+        let mut size = 0;
+        let domain_info = (*domain_info_opt).as_ref()?;
+        let domain_idx_map = &domain_info.0;
+        let default_domain_model_opt = &domain_info.1;
+        let default_domain_flag = domain_info.2;
+
+        let value_array_map = model
+            .vars
+            .get(&ModelValue::literal(&deduct_table_name(
+                self.extract_literal()?,
+            )?))?
+            .extract_map()?;
+
+        // In the model, the Store_ represents the update of that map
+        let value_update_map_opt = model
+            .vars
+            .get(&ModelValue::literal(&deduct_update_table_name(
+                self.extract_literal()?,
+            )?))
+            .and_then(|update_map| update_map.extract_map());
+
+        let mut domain_exists_map_opt = domain_idx_map.get(domain);
+        if domain_exists_map_opt == None {
+            if let Some(default_domain_model) = default_domain_model_opt {
+                domain_exists_map_opt = domain_idx_map.get(default_domain_model);
+            }
+        }
+
+        let mut values = BTreeMap::new();
+        let mut default = ModelValue::error();
+
+        let mut insert_values = |elem_opt: &ModelValue, new_value: &ModelValue| {
+            if let Some(idx) = elem_opt.extract_number() {
+                if let Some(domain_exists_map) = domain_exists_map_opt {
+                    let mut flag = default_domain_flag;
+                    if let Some(domain_exists_value) = domain_exists_map.get(&idx) {
+                        flag = *domain_exists_value;
+                    }
+                    if flag {
+                        // Only print the memory locations in the domain
+                        values.insert(idx, new_value.clone());
+                        size += 1;
+                    }
+                }
+            }
+        };
+
+        // Each entry in value_array_map takes the form:
+        // key: |T@[Int]$1_Bug7_BallotCounter!val!0| 0
+        // value: ($1_Bug7_BallotCounter 18446744073709522257)
+        // elems[1] is index to represent the instance of the memory
+        for (key, value) in value_array_map {
+            if let ModelValue::List(elems) = key {
+                if elems.len() == 2 && &elems[0] == self {
+                    insert_values(&elems[1], value);
+                }
+            } else if key == &ModelValue::literal("else") {
+                // Currently, we assume existence of default memory locations print out the value.
+                if default_domain_flag {
+                    default = value.clone();
+                }
+            }
+        }
+
+        // Travese the update map to obtain the updated value
+        if let Some(value_update_map) = value_update_map_opt {
+            for up_k in value_update_map.keys() {
+                if let ModelValue::List(elems) = up_k {
+                    // We only consider the case
+                    // Where elems has three elements: Array symbol, position, updated value
+                    if elems.len() == 3 && &elems[0] == self {
+                        insert_values(&elems[1], &elems[2]);
+                    }
+                }
+            }
+        }
+
+        Some(ModelValueVector {
+            size,
+            values,
+            default,
+        })
     }
 
     fn extract_seq_unit(&self) -> Option<ModelValue> {
@@ -887,6 +1246,44 @@ impl ModelValue {
                 Some(elems[0].clone())
             }
         })
+    }
+
+    /// Extracts a $Select map with self the variable in the model.
+    fn extract_select_int_map(
+        &self,
+        model: &Model,
+    ) -> Option<(BTreeMap<usize, ModelValue>, ModelValue)> {
+        let map = model
+            .vars
+            .get(&ModelValue::literal(&deduct_table_name(
+                self.extract_literal()?,
+            )?))?
+            .extract_map()?;
+        let mut values = BTreeMap::new();
+        let mut default = Self::error();
+        for (key, value) in map {
+            if let ModelValue::List(elems) = key {
+                if elems.len() == 2 && &elems[0] == self {
+                    if let Some(idx) = elems[1].extract_number() {
+                        values.insert(idx, value.clone());
+                    }
+                }
+            } else if key == &ModelValue::literal("else") {
+                default = value.clone();
+            }
+        }
+        Some((values, default))
+    }
+
+    /// Extract a reverse mapping of values encoded by integers.
+    fn extract_encoding_map(&self) -> Option<BTreeMap<usize, ModelValue>> {
+        let mut res = BTreeMap::new();
+        for (key, val) in self.extract_map()? {
+            if key != &ModelValue::literal("else") {
+                res.insert(val.extract_number()?, key.clone());
+            }
+        }
+        Some(res)
     }
 
     fn extract_map(&self) -> Option<&BTreeMap<ModelValue, ModelValue>> {
@@ -1019,10 +1416,15 @@ impl ModelValue {
             }
             Type::Vector(param) => self.pretty_vector(wrapper, model, param),
             Type::Struct(module_id, struct_id, params) => {
-                self.pretty_struct(wrapper, model, *module_id, *struct_id, params)
+                let struct_env = wrapper.env.get_struct_qid(module_id.qualified(*struct_id));
+                if struct_env.is_intrinsic_of(INTRINSIC_TYPE_MAP) {
+                    self.pretty_table(wrapper, model, &params[0], &params[1])
+                } else {
+                    self.pretty_struct(wrapper, model, &struct_env, params)
+                }
             }
             Type::Reference(_, bt) => {
-                Some(PrettyDoc::text("&").append(self.pretty(wrapper, model, &*bt)?))
+                Some(PrettyDoc::text("&").append(self.pretty(wrapper, model, bt)?))
             }
             Type::TypeParameter(_) => {
                 // The value of a generic cannot be easily displayed because we do not know the
@@ -1095,12 +1497,9 @@ impl ModelValue {
         &self,
         wrapper: &BoogieWrapper,
         model: &Model,
-        module_id: ModuleId,
-        struct_id: StructId,
+        struct_env: &StructEnv,
         inst: &[Type],
     ) -> Option<PrettyDoc> {
-        let module_env = wrapper.env.get_module(module_id);
-        let struct_env = module_env.get_struct(struct_id);
         let entries = if struct_env.is_native_or_intrinsic() {
             let mut rep = self.extract_literal()?.to_string();
             if rep.starts_with("T@") {
@@ -1110,7 +1509,7 @@ impl ModelValue {
             }
             vec![PrettyDoc::text(rep)]
         } else {
-            let struct_name = &boogie_struct_name(&struct_env, inst);
+            let struct_name = &boogie_struct_name(struct_env, inst);
             let values = self
                 .extract_list(struct_name)
                 // It appears sometimes keys are represented witout, sometimes with enclosing
@@ -1142,11 +1541,84 @@ impl ModelValue {
                     .module_env
                     .get_name()
                     .name()
-                    .display(module_env.symbol_pool()),
-                struct_env.get_name().display(module_env.symbol_pool())
+                    .display(struct_env.symbol_pool()),
+                struct_env.get_name().display(struct_env.symbol_pool())
             ))
             .append(Self::pretty_vec_or_struct_body(entries)),
         )
+    }
+
+    /// Pretty prints a table.
+    pub fn pretty_table(
+        &self,
+        wrapper: &BoogieWrapper,
+        model: &Model,
+        key_ty: &Type,
+        val_ty: &Type,
+    ) -> Option<PrettyDoc> {
+        // Compute the encoding map. Table keys are encoded as ints, and this finds the
+        // function table of $EncodeKey and turns into a map from int to encoded ModelValue.
+        let encoding_key = format!(
+            "$EncodeKey{}",
+            boogie_inst_suffix(wrapper.env, &[key_ty.clone()])
+        );
+        let encoding_map = model
+            .vars
+            .get(&ModelValue::literal(&encoding_key))?
+            .extract_encoding_map()?;
+        // Build the entries to display
+        let ModelValueTable { keys, values, open } = self.extract_table(model, key_ty, val_ty)?;
+        let mut entries = vec![];
+        for key in keys {
+            let key_rep = if let Some(k) = encoding_map.get(&key) {
+                k.pretty_or_raw(wrapper, model, key_ty)
+            } else {
+                PrettyDoc::text("?")
+            };
+            let val_rep = if let Some(val) = values.get(&key) {
+                val.pretty_or_raw(wrapper, model, val_ty)
+            } else {
+                PrettyDoc::text("?")
+            };
+            entries.push(key_rep.append(PrettyDoc::text(": ")).append(val_rep))
+        }
+        if open {
+            // Append a marker to indicate this table is open ended.
+            entries.push(PrettyDoc::text(".."));
+        }
+        Some(PrettyDoc::text("Table").append(Self::pretty_vec_or_struct_body(entries)))
+    }
+
+    /// Pretty prints the global memory
+    pub fn pretty_mem(
+        &self,
+        wrapper: &BoogieWrapper,
+        domain: &ModelValue,
+        domain_info_opt: &Option<(
+            BTreeMap<ModelValue, BTreeMap<usize, bool>>,
+            Option<ModelValue>,
+            bool,
+        )>,
+        model: &Model,
+        param: &Type,
+    ) -> Option<PrettyDoc> {
+        let values = self.extract_mem_vector(model, domain, domain_info_opt)?;
+        let mut entries = vec![];
+        for idx in values.values.keys().sorted() {
+            let mut p = values.values.get(idx)?.pretty_or_raw(wrapper, model, param);
+            p = PrettyDoc::text(format!("Address({}): ", idx)).append(p);
+            entries.push(p);
+        }
+        let default = if values.default == ModelValue::error() {
+            PrettyDoc::text("empty")
+        } else {
+            values
+                .default
+                .pretty(wrapper, model, param)
+                .unwrap_or_else(|| PrettyDoc::text("undef"))
+        };
+        entries.push(PrettyDoc::text("Default: ").append(default));
+        Some(Self::pretty_vec_or_struct_body(entries))
     }
 }
 
@@ -1245,7 +1717,7 @@ impl<'s> ModelParser<'s> {
 
     fn parse_key(&mut self) -> Result<ModelValue, ModelParseError> {
         let mut comps = vec![];
-        while !self.looking_at("->") {
+        while !self.looking_at("->") && self.at < self.input.len() {
             let value = self.parse_value()?;
             comps.push(value);
         }

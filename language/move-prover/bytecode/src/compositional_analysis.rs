@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -33,7 +34,7 @@ impl<'a> SummaryCache<'a> {
         let fun_env = self.global_env.get_function(fun_id);
         self.targets
             .get_data(&fun_id, variant)
-            .map(|fun_data| {
+            .and_then(|fun_data| {
                 if fun_env.is_native_or_intrinsic() {
                     None
                 } else {
@@ -44,7 +45,6 @@ impl<'a> SummaryCache<'a> {
                     )
                 }
             })
-            .flatten()
     }
 
     pub fn global_env(&self) -> &GlobalEnv {

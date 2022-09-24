@@ -1,9 +1,10 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{measurement::Measurement, Criterion};
 use move_binary_format::CompiledModule;
-use move_compiler::{compiled_unit::AnnotatedCompiledUnit, Compiler, Flags};
+use move_compiler::{compiled_unit::AnnotatedCompiledUnit, Compiler};
 use move_core_types::{
     account_address::AccountAddress,
     identifier::{IdentStr, Identifier},
@@ -11,7 +12,7 @@ use move_core_types::{
 };
 use move_vm_runtime::move_vm::MoveVM;
 use move_vm_test_utils::BlankStorage;
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_types::gas::UnmeteredGasMeter;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
 
@@ -26,6 +27,7 @@ pub fn bench<M: Measurement + 'static>(c: &mut Criterion<M>, fun: &str) {
     let modules = compile_modules();
     let move_vm = MoveVM::new(move_stdlib::natives::all_natives(
         AccountAddress::from_hex_literal("0x1").unwrap(),
+        move_stdlib::natives::GasParameters::zeros(),
     ))
     .unwrap();
     execute(c, &move_vm, modules, fun);
@@ -35,11 +37,13 @@ pub fn bench<M: Measurement + 'static>(c: &mut Criterion<M>, fun: &str) {
 fn compile_modules() -> Vec<CompiledModule> {
     let mut src_files = move_stdlib::move_stdlib_files();
     src_files.push(MOVE_BENCH_SRC_PATH.to_str().unwrap().to_owned());
-    let (_files, compiled_units) = Compiler::new(&src_files, &[])
-        .set_flags(Flags::empty().set_sources_shadow_deps(false))
-        .set_named_address_values(move_stdlib::move_stdlib_named_addresses())
-        .build_and_report()
-        .expect("Error compiling...");
+    let (_files, compiled_units) = Compiler::from_files(
+        src_files,
+        vec![],
+        move_stdlib::move_stdlib_named_addresses(),
+    )
+    .build_and_report()
+    .expect("Error compiling...");
     compiled_units
         .into_iter()
         .map(|unit| match unit {
@@ -62,7 +66,8 @@ fn execute<M: Measurement + 'static>(
     let storage = BlankStorage::new();
     let sender = CORE_CODE_ADDRESS;
     let mut session = move_vm.new_session(&storage);
-    let mut gas_status = GasStatus::new_unmetered();
+
+    // TODO: we may want to use a real gas meter to make benchmarks more realistic.
 
     for module in modules {
         let mut mod_blob = vec![];
@@ -70,7 +75,7 @@ fn execute<M: Measurement + 'static>(
             .serialize(&mut mod_blob)
             .expect("Module serialization error");
         session
-            .publish_module(mod_blob, sender, &mut gas_status)
+            .publish_module(mod_blob, sender, &mut UnmeteredGasMeter)
             .expect("Module must load");
     }
 
@@ -82,7 +87,13 @@ fn execute<M: Measurement + 'static>(
     c.bench_function(fun, |b| {
         b.iter(|| {
             session
-                .execute_function(&module_id, fun_name, vec![], vec![], &mut gas_status)
+                .execute_function_bypass_visibility(
+                    &module_id,
+                    fun_name,
+                    vec![],
+                    Vec::<Vec<u8>>::new(),
+                    &mut UnmeteredGasMeter,
+                )
                 .unwrap_or_else(|err| {
                     panic!(
                         "{:?}::{} failed with {:?}",

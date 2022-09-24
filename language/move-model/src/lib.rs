@@ -1,13 +1,20 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
 
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
+
 use codespan::ByteIndex;
 use codespan_reporting::diagnostic::{Diagnostic, Label, LabelStyle};
+use itertools::Itertools;
 #[allow(unused_imports)]
 use log::warn;
-use std::collections::{BTreeMap, BTreeSet};
+use num::{BigUint, Num};
 
 use builder::module_builder::ModuleBuilder;
 use move_binary_format::{
@@ -26,13 +33,12 @@ use move_compiler::{
     diagnostics::Diagnostics,
     expansion::ast::{self as E, Address, ModuleDefinition, ModuleIdent, ModuleIdent_},
     parser::ast::{self as P, ModuleName as ParserModuleName},
-    shared::{parse_named_address, unique_map::UniqueMap, NumericalAddress},
+    shared::{parse_named_address, unique_map::UniqueMap, NumericalAddress, PackagePaths},
     Compiler, Flags, PASS_COMPILATION, PASS_EXPANSION, PASS_PARSER,
 };
 use move_core_types::{account_address::AccountAddress, identifier::Identifier};
 use move_ir_types::location::sp;
-use move_symbol_pool::Symbol as MoveStringSymbol;
-use num::{BigUint, Num};
+use move_symbol_pool::Symbol as MoveSymbol;
 
 use crate::{
     ast::{ModuleName, Spec},
@@ -47,72 +53,80 @@ mod builder;
 pub mod code_writer;
 pub mod exp_generator;
 pub mod exp_rewriter;
+pub mod intrinsics;
 pub mod model;
-pub mod native;
 pub mod options;
 pub mod pragmas;
 pub mod simplifier;
 pub mod spec_translator;
 pub mod symbol;
 pub mod ty;
+pub mod well_known;
 
 // =================================================================================================
 // Entry Point
 
 /// Build the move model with default compilation flags and default options and no named addresses.
 /// This collects transitive dependencies for move sources from the provided directory list.
-pub fn run_model_builder(
-    move_sources: &[String],
-    deps_dir: &[String],
+pub fn run_model_builder<
+    Paths: Into<MoveSymbol> + Clone,
+    NamedAddress: Into<MoveSymbol> + Clone,
+>(
+    move_sources: Vec<PackagePaths<Paths, NamedAddress>>,
+    deps: Vec<PackagePaths<Paths, NamedAddress>>,
 ) -> anyhow::Result<GlobalEnv> {
-    run_model_builder_with_options(
-        move_sources,
-        deps_dir,
-        ModelBuilderOptions::default(),
-        BTreeMap::new(),
-    )
+    run_model_builder_with_options(move_sources, deps, ModelBuilderOptions::default())
 }
 
 /// Build the move model with default compilation flags and custom options and a set of provided
 /// named addreses.
 /// This collects transitive dependencies for move sources from the provided directory list.
-pub fn run_model_builder_with_options(
-    move_sources: &[String],
-    deps_dir: &[String],
+pub fn run_model_builder_with_options<
+    Paths: Into<MoveSymbol> + Clone,
+    NamedAddress: Into<MoveSymbol> + Clone,
+>(
+    move_sources: Vec<PackagePaths<Paths, NamedAddress>>,
+    deps: Vec<PackagePaths<Paths, NamedAddress>>,
     options: ModelBuilderOptions,
-    named_address_mapping: BTreeMap<String, NumericalAddress>,
 ) -> anyhow::Result<GlobalEnv> {
     run_model_builder_with_options_and_compilation_flags(
         move_sources,
-        deps_dir,
+        deps,
         options,
-        Flags::empty(),
-        named_address_mapping,
+        Flags::verification(),
     )
 }
 
 /// Build the move model with custom compilation flags and custom options
 /// This collects transitive dependencies for move sources from the provided directory list.
-pub fn run_model_builder_with_options_and_compilation_flags(
-    move_sources: &[String],
-    deps_dir: &[String],
+pub fn run_model_builder_with_options_and_compilation_flags<
+    Paths: Into<MoveSymbol> + Clone,
+    NamedAddress: Into<MoveSymbol> + Clone,
+>(
+    move_sources: Vec<PackagePaths<Paths, NamedAddress>>,
+    deps: Vec<PackagePaths<Paths, NamedAddress>>,
     options: ModelBuilderOptions,
     flags: Flags,
-    named_address_mapping: BTreeMap<String, NumericalAddress>,
 ) -> anyhow::Result<GlobalEnv> {
     let mut env = GlobalEnv::new();
     env.set_extension(options);
 
     // Step 1: parse the program to get comments and a separation of targets and dependencies.
-    let (files, comments_and_compiler_res) = Compiler::new(move_sources, deps_dir)
+    let (files, comments_and_compiler_res) = Compiler::from_package_paths(move_sources, deps)
         .set_flags(flags)
-        .set_named_address_values(named_address_mapping.clone())
         .run::<PASS_PARSER>()?;
     let (comment_map, compiler) = match comments_and_compiler_res {
         Err(diags) => {
             // Add source files so that the env knows how to translate locations of parse errors
+            let empty_alias = Rc::new(BTreeMap::new());
             for (fhash, (fname, fsrc)) in &files {
-                env.add_source(*fhash, fname.as_str(), fsrc, /* is_dep */ false);
+                env.add_source(
+                    *fhash,
+                    empty_alias.clone(),
+                    fname.as_str(),
+                    fsrc,
+                    /* is_dep */ false,
+                );
             }
             add_move_lang_diagnostics(&mut env, diags);
             return Ok(env);
@@ -120,14 +134,44 @@ pub fn run_model_builder_with_options_and_compilation_flags(
         Ok(res) => res,
     };
     let (compiler, parsed_prog) = compiler.into_ast();
+
     // Add source files for targets and dependencies
     let dep_files: BTreeSet<_> = parsed_prog
         .lib_definitions
         .iter()
-        .map(|def| def.file_hash())
+        .map(|p| p.def.file_hash())
         .collect();
-    for (fhash, (fname, fsrc)) in &files {
-        env.add_source(*fhash, fname.as_str(), fsrc, dep_files.contains(fhash));
+
+    for member in parsed_prog
+        .source_definitions
+        .iter()
+        .chain(parsed_prog.lib_definitions.iter())
+    {
+        let fhash = member.def.file_hash();
+        let (fname, fsrc) = files.get(&fhash).unwrap();
+        let is_dep = dep_files.contains(&fhash);
+        let aliases = parsed_prog
+            .named_address_maps
+            .get(member.named_address_map)
+            .iter()
+            .map(|(symbol, addr)| (env.symbol_pool().make(symbol.as_str()), *addr))
+            .collect();
+        env.add_source(fhash, Rc::new(aliases), fname.as_str(), fsrc, is_dep);
+    }
+
+    // If a move file does not contain any definition, it will not appear in `parsed_prog`. Add them explicitly.
+    for fhash in files.keys().sorted() {
+        if env.get_file_id(*fhash).is_none() {
+            let (fname, fsrc) = files.get(fhash).unwrap();
+            let is_dep = dep_files.contains(fhash);
+            env.add_source(
+                *fhash,
+                Rc::new(BTreeMap::new()),
+                fname.as_str(),
+                fsrc,
+                is_dep,
+            );
+        }
     }
 
     // Add any documentation comments found by the Move compiler to the env.
@@ -145,11 +189,13 @@ pub fn run_model_builder_with_options_and_compilation_flags(
     // Step 2: run the compiler up to expansion
     let parsed_prog = {
         let P::Program {
+            named_address_maps,
             mut source_definitions,
             lib_definitions,
         } = parsed_prog;
         source_definitions.extend(lib_definitions);
         P::Program {
+            named_address_maps,
             source_definitions,
             lib_definitions: vec![],
         }
@@ -161,18 +207,13 @@ pub fn run_model_builder_with_options_and_compilation_flags(
         }
         Ok(compiler) => compiler.into_ast(),
     };
+
     // Extract the module/script closure
-    let mut visited_addresses = BTreeSet::new();
     let mut visited_modules = BTreeSet::new();
     for (_, mident, mdef) in &expansion_ast.modules {
         let src_file_hash = mdef.loc.file_hash();
         if !dep_files.contains(&src_file_hash) {
-            collect_related_modules_recursive(
-                mident,
-                &expansion_ast.modules,
-                &mut visited_addresses,
-                &mut visited_modules,
-            );
+            collect_related_modules_recursive(mident, &expansion_ast.modules, &mut visited_modules);
         }
     }
     for sdef in expansion_ast.scripts.values() {
@@ -182,26 +223,11 @@ pub fn run_model_builder_with_options_and_compilation_flags(
                 collect_related_modules_recursive(
                     mident,
                     &expansion_ast.modules,
-                    &mut visited_addresses,
                     &mut visited_modules,
                 );
             }
-            for addr in &sdef.used_addresses {
-                if let Address::Named(n) = &addr {
-                    visited_addresses.insert(&n.value);
-                }
-            }
         }
     }
-
-    let addresses = named_address_mapping
-        .into_iter()
-        .filter_map(|(n, val)| {
-            visited_addresses
-                .contains(n.as_str())
-                .then(|| (n.into(), val))
-        })
-        .collect();
 
     // Step 3: selective compilation.
     let expansion_ast = {
@@ -214,6 +240,7 @@ pub fn run_model_builder_with_options_and_compilation_flags(
         });
         E::Program { modules, scripts }
     };
+
     // Run the compiler fully to the compiled units
     let units = match compiler
         .at_expansion(expansion_ast.clone())
@@ -234,6 +261,7 @@ pub fn run_model_builder_with_options_and_compilation_flags(
             units
         }
     };
+
     // Check for bytecode verifier errors (there should not be any)
     let diags = compiled_unit::verify_units(&units);
     if !diags.is_empty() {
@@ -243,38 +271,22 @@ pub fn run_model_builder_with_options_and_compilation_flags(
 
     // Now that it is known that the program has no errors, run the spec checker on verified units
     // plus expanded AST. This will populate the environment including any errors.
-    run_spec_checker(&mut env, addresses, units, expansion_ast);
+    run_spec_checker(&mut env, units, expansion_ast);
     Ok(env)
-}
-
-fn collect_used_addresses<'a>(
-    used_addresses: &'a BTreeSet<Address>,
-    visited_addresses: &mut BTreeSet<&'a str>,
-) {
-    for addr in used_addresses {
-        if let Address::Named(n) = &addr {
-            visited_addresses.insert(&n.value);
-        }
-    }
 }
 
 fn collect_related_modules_recursive<'a>(
     mident: &'a ModuleIdent_,
     modules: &'a UniqueMap<ModuleIdent, ModuleDefinition>,
-    visited_addresses: &mut BTreeSet<&'a str>,
     visited_modules: &mut BTreeSet<ModuleIdent_>,
 ) {
     if visited_modules.contains(mident) {
         return;
     }
     let mdef = modules.get_(mident).unwrap();
-    if let Address::Named(n) = &mident.address {
-        visited_addresses.insert(&n.value);
-    }
-    collect_used_addresses(&mdef.used_addresses, visited_addresses);
     visited_modules.insert(*mident);
     for (_, next_mident, _) in &mdef.immediate_neighbors {
-        collect_related_modules_recursive(next_mident, modules, visited_addresses, visited_modules);
+        collect_related_modules_recursive(next_mident, modules, visited_modules);
     }
 }
 
@@ -336,7 +348,7 @@ fn add_move_lang_diagnostics(env: &mut GlobalEnv, diags: Diagnostics) {
         let loc = env.to_loc(&loc);
         Label::new(style, loc.file_id(), loc.span()).with_message(msg)
     };
-    for (severity, msg, primary_label, secondary_labels) in diags.into_codespan_format() {
+    for (severity, msg, primary_label, secondary_labels, notes) in diags.into_codespan_format() {
         let diag = Diagnostic::new(severity)
             .with_labels(vec![mk_label(true, primary_label)])
             .with_message(msg)
@@ -345,7 +357,8 @@ fn add_move_lang_diagnostics(env: &mut GlobalEnv, diags: Diagnostics) {
                     .into_iter()
                     .map(|e| mk_label(false, e))
                     .collect(),
-            );
+            )
+            .with_notes(notes);
         env.add_diag(diag);
     }
 }
@@ -429,7 +442,8 @@ fn script_into_module(compiled_script: CompiledScript) -> CompiledModule {
     // Create a function definition for the main function.
     let main_def = FunctionDefinition {
         function: main_handle_idx,
-        visibility: Visibility::Script,
+        visibility: Visibility::Public,
+        is_entry: true,
         acquires_global_resources: vec![],
         code: Some(script.code),
     };
@@ -452,6 +466,7 @@ fn script_into_module(compiled_script: CompiledScript) -> CompiledModule {
         identifiers: script.identifiers,
         address_identifiers: script.address_identifiers,
         constant_pool: script.constant_pool,
+        metadata: script.metadata,
 
         struct_defs: vec![],
         function_defs: vec![main_def],
@@ -461,13 +476,8 @@ fn script_into_module(compiled_script: CompiledScript) -> CompiledModule {
 }
 
 #[allow(deprecated)]
-fn run_spec_checker(
-    env: &mut GlobalEnv,
-    named_address_mapping: BTreeMap<MoveStringSymbol, NumericalAddress>,
-    units: Vec<AnnotatedCompiledUnit>,
-    mut eprog: E::Program,
-) {
-    let mut builder = ModelBuilder::new(env, named_address_mapping);
+fn run_spec_checker(env: &mut GlobalEnv, units: Vec<AnnotatedCompiledUnit>, mut eprog: E::Program) {
+    let mut builder = ModelBuilder::new(env);
     // Merge the compiled units with the expanded program, preserving the order of the compiled
     // units which is topological w.r.t. use relation.
     let modules = units
@@ -500,6 +510,7 @@ fn run_spec_checker(
                     function_info,
                 }) => {
                     let move_compiler::expansion::ast::Script {
+                        package_name,
                         attributes,
                         loc,
                         immediate_neighbors,
@@ -520,7 +531,7 @@ fn run_spec_checker(
                     };
                     // Convert the script into a module.
                     let address =
-                        Address::Anonymous(sp(loc, NumericalAddress::DEFAULT_ERROR_ADDRESS));
+                        Address::Numerical(None, sp(loc, NumericalAddress::DEFAULT_ERROR_ADDRESS));
                     let ident = sp(
                         loc,
                         ModuleIdent_::new(address, ParserModuleName(function_name.0)),
@@ -531,6 +542,7 @@ fn run_spec_checker(
                     let mut functions = UniqueMap::new();
                     functions.add(function_name, function).unwrap();
                     let expanded_module = ModuleDefinition {
+                        package_name,
                         attributes,
                         loc,
                         dependency_order: usize::MAX,
@@ -577,6 +589,10 @@ fn run_spec_checker(
             function_infos,
         );
     }
+
+    // Populate GlobalEnv with model-level information
+    builder.populate_env();
+
     // After all specs have been processed, warn about any unused schemas.
     builder.warn_unused_schemas();
 

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -254,6 +255,7 @@ fn cycle_error(
         cycle_info
             .into_iter()
             .map(|(loc, _dep_type, msg, _node, _neighbor)| (loc, msg)),
+        std::iter::empty::<String>(),
     )
 }
 

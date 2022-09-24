@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
@@ -22,7 +23,7 @@ use move_core_types::{
     value::{serialize_values, MoveValue},
     vm_status::{StatusCode, StatusType},
 };
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_types::gas::UnmeteredGasMeter;
 
 // make a script with a given signature for main.
 fn make_script(parameters: Signature) -> Vec<u8> {
@@ -52,6 +53,7 @@ fn make_script(parameters: Signature) -> Vec<u8> {
         identifiers: vec![],
         address_identifiers: vec![],
         constant_pool: vec![],
+        metadata: vec![],
 
         type_parameters: vec![],
         parameters: parameters_idx,
@@ -115,6 +117,7 @@ fn make_script_with_non_linking_structs(parameters: Signature) -> Vec<u8> {
         ],
         address_identifiers: vec![AccountAddress::random()],
         constant_pool: vec![],
+        metadata: vec![],
 
         type_parameters: vec![],
         parameters: parameters_idx,
@@ -130,6 +133,7 @@ fn make_script_with_non_linking_structs(parameters: Signature) -> Vec<u8> {
 
 fn make_module_with_function(
     visibility: Visibility,
+    is_entry: bool,
     parameters: Signature,
     return_: Signature,
     type_parameters: Vec<AbilitySet>,
@@ -190,6 +194,7 @@ fn make_module_with_function(
         ],
         address_identifiers: vec![AccountAddress::random()],
         constant_pool: vec![],
+        metadata: vec![],
 
         struct_defs: vec![StructDefinition {
             struct_handle: StructHandleIndex(0),
@@ -201,6 +206,7 @@ fn make_module_with_function(
         function_defs: vec![FunctionDefinition {
             function: FunctionHandleIndex(0),
             visibility,
+            is_entry,
             acquires_global_resources: vec![],
             code: Some(CodeUnit {
                 locals: SignatureIndex(0),
@@ -213,7 +219,13 @@ fn make_module_with_function(
 
 // make a script function with a given signature for main.
 fn make_script_function(signature: Signature) -> (CompiledModule, Identifier) {
-    make_module_with_function(Visibility::Script, signature, Signature(vec![]), vec![])
+    make_module_with_function(
+        Visibility::Public,
+        true,
+        signature,
+        Signature(vec![]),
+        vec![],
+    )
 }
 
 struct RemoteStore {
@@ -254,17 +266,34 @@ impl ResourceResolver for RemoteStore {
     }
 }
 
+fn combine_signers_and_args(
+    signers: Vec<AccountAddress>,
+    non_signer_args: Vec<Vec<u8>>,
+) -> Vec<Vec<u8>> {
+    signers
+        .into_iter()
+        .map(|s| MoveValue::Signer(s).simple_serialize().unwrap())
+        .chain(non_signer_args)
+        .collect()
+}
+
 fn call_script_with_args_ty_args_signers(
     script: Vec<u8>,
-    args: Vec<Vec<u8>>,
+    non_signer_args: Vec<Vec<u8>>,
     ty_args: Vec<TypeTag>,
     signers: Vec<AccountAddress>,
 ) -> VMResult<()> {
     let move_vm = MoveVM::new(vec![]).unwrap();
     let remote_view = RemoteStore::new();
     let mut session = move_vm.new_session(&remote_view);
-    let mut gas_status = GasStatus::new_unmetered();
-    session.execute_script(script, ty_args, args, signers, &mut gas_status)
+    session
+        .execute_script(
+            script,
+            ty_args,
+            combine_signers_and_args(signers, non_signer_args),
+            &mut UnmeteredGasMeter,
+        )
+        .map(|_| ())
 }
 
 fn call_script(script: Vec<u8>, args: Vec<Vec<u8>>) -> VMResult<()> {
@@ -274,7 +303,7 @@ fn call_script(script: Vec<u8>, args: Vec<Vec<u8>>) -> VMResult<()> {
 fn call_script_function_with_args_ty_args_signers(
     module: CompiledModule,
     function_name: Identifier,
-    args: Vec<Vec<u8>>,
+    non_signer_args: Vec<Vec<u8>>,
     ty_args: Vec<TypeTag>,
     signers: Vec<AccountAddress>,
 ) -> VMResult<()> {
@@ -283,14 +312,12 @@ fn call_script_function_with_args_ty_args_signers(
     let id = module.self_id();
     remote_view.add_module(module);
     let mut session = move_vm.new_session(&remote_view);
-    let mut gas_status = GasStatus::new_unmetered();
-    session.execute_script_function(
+    session.execute_function_bypass_visibility(
         &id,
         function_name.as_ident_str(),
         ty_args,
-        args,
-        signers,
-        &mut gas_status,
+        combine_signers_and_args(signers, non_signer_args),
+        &mut UnmeteredGasMeter,
     )?;
     Ok(())
 }
@@ -303,7 +330,8 @@ fn call_script_function(
     call_script_function_with_args_ty_args_signers(module, function_name, args, vec![], vec![])
 }
 
-fn bad_signatures() -> Vec<Signature> {
+// these signatures used to be bad, but there are no bad signatures for scripts at the VM
+fn deprecated_bad_signatures() -> Vec<Signature> {
     vec![
         // struct in signature
         Signature(vec![SignatureToken::Struct(StructHandleIndex(0))]),
@@ -521,14 +549,14 @@ fn general_cases() -> Vec<(
             Signature(vec![SignatureToken::Signer, SignatureToken::Signer]),
             vec![],
             vec![],
-            Some(StatusCode::NUMBER_OF_SIGNER_ARGUMENTS_MISMATCH),
+            Some(StatusCode::NUMBER_OF_ARGUMENTS_MISMATCH),
         ),
         // too few signers (1)
         (
             Signature(vec![SignatureToken::Signer, SignatureToken::Signer]),
             vec![],
             vec![AccountAddress::random()],
-            Some(StatusCode::NUMBER_OF_SIGNER_ARGUMENTS_MISMATCH),
+            Some(StatusCode::NUMBER_OF_ARGUMENTS_MISMATCH),
         ),
         // too few signers (3)
         (
@@ -539,7 +567,7 @@ fn general_cases() -> Vec<(
                 AccountAddress::random(),
                 AccountAddress::random(),
             ],
-            Some(StatusCode::NUMBER_OF_SIGNER_ARGUMENTS_MISMATCH),
+            Some(StatusCode::NUMBER_OF_ARGUMENTS_MISMATCH),
         ),
         // correct number of signers (2)
         (
@@ -548,12 +576,12 @@ fn general_cases() -> Vec<(
             vec![AccountAddress::random(), AccountAddress::random()],
             None,
         ),
-        // too many signers (1) in a script that expects 0 is ok
+        // too many signers (1) in a script that expects 0 is no longer ok
         (
             Signature(vec![SignatureToken::U8]),
             vec![MoveValue::U8(0)],
             vec![AccountAddress::random()],
-            None,
+            Some(StatusCode::NUMBER_OF_ARGUMENTS_MISMATCH),
         ),
         // signer
         (
@@ -577,15 +605,15 @@ fn check_script() {
     //
     // Bad signatures
     //
-    for signature in bad_signatures() {
+    for signature in deprecated_bad_signatures() {
+        let num_args = signature.0.len();
+        let dummy_args = vec![MoveValue::Bool(false); num_args];
         let script = make_script_with_non_linking_structs(signature);
-        assert_eq!(
-            call_script(script, serialize_values(&vec![MoveValue::U128(0)]))
-                .err()
-                .unwrap()
-                .major_status(),
-            StatusCode::INVALID_MAIN_FUNCTION_SIGNATURE,
-        );
+        let status = call_script(script, serialize_values(&dummy_args))
+            .err()
+            .unwrap()
+            .major_status();
+        assert_eq!(status, StatusCode::LINKER_ERROR);
     }
 
     //
@@ -637,19 +665,19 @@ fn check_script_function() {
     //
     // Bad signatures
     //
-    for signature in bad_signatures() {
+    for signature in deprecated_bad_signatures() {
+        let num_args = signature.0.len();
+        let dummy_args = vec![MoveValue::Bool(false); num_args];
         let (module, function_name) = make_script_function(signature);
-        let res = call_script_function(
-            module,
-            function_name,
-            serialize_values(&vec![MoveValue::U128(0)]),
+        let res = call_script_function(module, function_name, serialize_values(&dummy_args))
+            .err()
+            .unwrap();
+        // either the dummy arg matches so abort, or it fails to match
+        // but the important thing is that the signature was accepted
+        assert!(
+            res.major_status() == StatusCode::ABORTED
+                || res.major_status() == StatusCode::FAILED_TO_DESERIALIZE_ARGUMENT
         )
-        .err()
-        .unwrap();
-        assert_eq!(
-            res.major_status(),
-            StatusCode::INVALID_MAIN_FUNCTION_SIGNATURE,
-        );
     }
 
     //
@@ -703,10 +731,12 @@ fn check_script_function() {
 
     //
     // Non script visible
+    // DEPRECATED this check must now be done by the adapter
     //
     // public
     let (module, function_name) = make_module_with_function(
         Visibility::Public,
+        false,
         Signature(vec![]),
         Signature(vec![]),
         vec![],
@@ -722,11 +752,12 @@ fn check_script_function() {
         .err()
         .unwrap()
         .major_status(),
-        StatusCode::EXECUTE_SCRIPT_FUNCTION_CALLED_ON_NON_SCRIPT_VISIBLE,
+        StatusCode::ABORTED,
     );
     // private
     let (module, function_name) = make_module_with_function(
         Visibility::Private,
+        false,
         Signature(vec![]),
         Signature(vec![]),
         vec![],
@@ -742,7 +773,7 @@ fn check_script_function() {
         .err()
         .unwrap()
         .major_status(),
-        StatusCode::EXECUTE_SCRIPT_FUNCTION_CALLED_ON_NON_SCRIPT_VISIBLE,
+        StatusCode::ABORTED,
     );
 }
 
@@ -755,19 +786,31 @@ fn call_missing_item() {
     let move_vm = MoveVM::new(vec![]).unwrap();
     let mut remote_view = RemoteStore::new();
     let mut session = move_vm.new_session(&remote_view);
-    let mut gas_status = GasStatus::new_unmetered();
     let error = session
-        .execute_script_function(id, function_name, vec![], vec![], vec![], &mut gas_status)
+        .execute_function_bypass_visibility(
+            id,
+            function_name,
+            vec![],
+            Vec::<Vec<u8>>::new(),
+            &mut UnmeteredGasMeter,
+        )
         .err()
         .unwrap();
     assert_eq!(error.major_status(), StatusCode::LINKER_ERROR);
     assert_eq!(error.status_type(), StatusType::Verification);
+    drop(session);
 
     // missing function
     remote_view.add_module(module);
     let mut session = move_vm.new_session(&remote_view);
     let error = session
-        .execute_script_function(id, function_name, vec![], vec![], vec![], &mut gas_status)
+        .execute_function_bypass_visibility(
+            id,
+            function_name,
+            vec![],
+            Vec::<Vec<u8>>::new(),
+            &mut UnmeteredGasMeter,
+        )
         .err()
         .unwrap();
     assert_eq!(

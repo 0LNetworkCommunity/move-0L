@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Transformation which injects well-formed assumptions at top-level entry points of verified
@@ -64,7 +65,7 @@ impl FunctionTargetProcessor for WellFormedInstrumentationProcessor {
         }
 
         // Inject well-formedness assumption for used memory.
-        for mem in usage.accessed.all.clone() {
+        for mem in usage.accessed.all {
             let struct_env = builder.global_env().get_struct_qid(mem.to_qualified_id());
             if struct_env.is_native_or_intrinsic() {
                 // If this is native or intrinsic memory, skip this.
@@ -104,8 +105,7 @@ impl FunctionTargetProcessor for WellFormedInstrumentationProcessor {
                         Operation::Global(None),
                         vec![zero_addr],
                     );
-                    let eq_with_init =
-                        builder.mk_bool_call(Operation::Identical, vec![mem_access, mem_val]);
+                    let eq_with_init = builder.mk_identical(mem_access, mem_val);
                     builder.emit_prop(PropKind::Assume, eq_with_init);
                 }
             }

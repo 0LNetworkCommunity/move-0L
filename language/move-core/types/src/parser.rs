@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -508,8 +509,8 @@ mod tests {
         for text in valid {
             let st = parse_struct_tag(text).expect("valid StructTag");
             assert_eq!(
-                st.to_string().replace(" ", ""),
-                text.replace(" ", ""),
+                st.to_string().replace(' ', ""),
+                text.replace(' ', ""),
                 "text: {:?}, StructTag: {:?}",
                 text,
                 st

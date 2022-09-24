@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use itertools::Itertools;
@@ -48,6 +49,10 @@ impl SpecPrinter<'_> {
                     v.iter().map(|e| format!("{:02x}", e)).join(""),
                 )),
             },
+            Value::AddressArray(v) => Self::doc(format!(
+                "x\"{}\"",
+                v.iter().map(|e| format!("@{:#x}", e)).join(""),
+            )),
         }
     }
 
@@ -524,11 +529,7 @@ impl SpecPrinter<'_> {
         I: IntoIterator<Item = E>,
         F: Fn(E) -> Doc,
     {
-        Self::wrap(
-            "(",
-            Self::sep_comma_space(items.into_iter().map(|t| func(t))),
-            ")",
-        )
+        Self::wrap("(", Self::sep_comma_space(items.into_iter().map(func)), ")")
     }
 
     fn mk_inst<E, I, F>(base: Doc, items: I, func: F) -> Doc
@@ -538,11 +539,7 @@ impl SpecPrinter<'_> {
     {
         Self::concat([
             base,
-            Self::wrap(
-                "<",
-                Self::sep_comma_space(items.into_iter().map(|t| func(t))),
-                ">",
-            ),
+            Self::wrap('<', Self::sep_comma_space(items.into_iter().map(func)), ">"),
         ])
     }
 

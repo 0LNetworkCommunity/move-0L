@@ -1,9 +1,11 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! This module translates specification conditions to Boogie code.
 
 use std::{
+    cell::RefCell,
     collections::{BTreeSet, HashMap},
     rc::Rc,
 };
@@ -13,29 +15,32 @@ use itertools::Itertools;
 use log::{debug, info, warn};
 
 use move_model::{
-    ast::{ExpData, LocalVarDecl, Operation, Value},
+    ast::{
+        Exp, ExpData, LocalVarDecl, MemoryLabel, Operation, QuantKind, SpecFunDecl, SpecVarDecl,
+        TempIndex, Value,
+    },
     code_writer::CodeWriter,
     emit, emitln,
-    model::{FieldId, GlobalEnv, Loc, ModuleEnv, ModuleId, NodeId, SpecFunId, StructId},
+    model::{
+        FieldId, GlobalEnv, Loc, ModuleEnv, ModuleId, NodeId, QualifiedInstId, SpecFunId,
+        SpecVarId, StructId,
+    },
     symbol::Symbol,
     ty::{PrimitiveType, Type},
+    well_known::{TYPE_INFO_SPEC, TYPE_NAME_SPEC},
 };
+use move_stackless_bytecode::mono_analysis::MonoInfo;
 
 use crate::{
     boogie_helpers::{
-        boogie_byte_blob, boogie_choice_fun_name, boogie_declare_global, boogie_field_sel,
-        boogie_inst_suffix, boogie_modifies_memory_name, boogie_resource_memory_name,
+        boogie_address_blob, boogie_byte_blob, boogie_choice_fun_name, boogie_declare_global,
+        boogie_field_sel, boogie_inst_suffix, boogie_modifies_memory_name,
+        boogie_reflection_type_info, boogie_reflection_type_name, boogie_resource_memory_name,
         boogie_spec_fun_name, boogie_spec_var_name, boogie_struct_name, boogie_type,
         boogie_type_suffix, boogie_well_formed_expr,
     },
     options::BoogieOptions,
 };
-use move_model::{
-    ast::{Exp, MemoryLabel, QuantKind, SpecFunDecl, SpecVarDecl, TempIndex},
-    model::{QualifiedInstId, SpecVarId},
-};
-use move_stackless_bytecode::mono_analysis::MonoInfo;
-use std::cell::RefCell;
 
 #[derive(Clone)]
 pub struct SpecTranslator<'env> {
@@ -155,7 +160,8 @@ impl<'env> SpecTranslator<'env> {
                 .spec_vars
                 .get(&module_env.get_id().qualified(*id))
                 .unwrap_or(empty)
-                .to_owned()
+                .iter()
+                .cloned()
             {
                 let name = boogie_spec_var_name(
                     module_env,
@@ -206,7 +212,8 @@ impl<'env> SpecTranslator<'env> {
                 .spec_funs
                 .get(&module_env.get_id().qualified(*id))
                 .unwrap_or(empty)
-                .to_owned()
+                .iter()
+                .cloned()
             {
                 let name = boogie_spec_fun_name(module_env, *id, &type_inst);
                 if !translated.insert(name) {
@@ -634,6 +641,7 @@ impl<'env> SpecTranslator<'env> {
             Value::Number(val) => emit!(self.writer, "{}", val),
             Value::Bool(val) => emit!(self.writer, "{}", val),
             Value::ByteArray(val) => emit!(self.writer, &boogie_byte_blob(self.options, val)),
+            Value::AddressArray(val) => emit!(self.writer, &boogie_address_blob(self.options, val)),
         }
     }
 
@@ -842,30 +850,63 @@ impl<'env> SpecTranslator<'env> {
         let inst = &self.get_node_instantiation(node_id);
         let module_env = &self.env.get_module(module_id);
         let fun_decl = module_env.get_spec_fun(fun_id);
-        let name = boogie_spec_fun_name(module_env, fun_id, inst);
-        emit!(self.writer, "{}(", name);
-        let mut first = true;
-        let mut maybe_comma = || {
-            if first {
-                first = false;
-            } else {
-                emit!(self.writer, ", ");
+
+        // special casing for type reflection
+        let mut processed = false;
+
+        // TODO(mengxu): change it to a better address name instead of extlib
+        if self.env.get_extlib_address() == *module_env.get_name().addr() {
+            let qualified_name = format!(
+                "{}::{}",
+                module_env.get_name().name().display(self.env.symbol_pool()),
+                fun_decl.name.display(self.env.symbol_pool()),
+            );
+            if qualified_name == TYPE_NAME_SPEC {
+                assert_eq!(inst.len(), 1);
+                emit!(
+                    self.writer,
+                    "{}",
+                    boogie_reflection_type_name(self.env, &inst[0])
+                );
+                processed = true;
+            } else if qualified_name == TYPE_INFO_SPEC {
+                assert_eq!(inst.len(), 1);
+                // TODO(mengxu): by ignoring the first return value of this function, we are
+                // essentially ignoring the condition where this `type_info` call may abort, e.g.,
+                // invoking `type_info` on a primitive type like: `type_info<bool>`.
+                let (_, info) = boogie_reflection_type_info(self.env, &inst[0]);
+                emit!(self.writer, "{}", info);
+                processed = true;
             }
-        };
-        let label_at = |i| memory_labels.as_ref().map(|labels| labels[i]);
-        let mut i = 0;
-        for memory in &fun_decl.used_memory {
-            let memory = &memory.to_owned().instantiate(inst);
-            maybe_comma();
-            let memory = boogie_resource_memory_name(self.env, memory, &label_at(i));
-            emit!(self.writer, &memory);
-            i = usize::saturating_add(i, 1);
         }
-        for exp in args {
-            maybe_comma();
-            self.translate_exp(exp);
+
+        // regular path
+        if !processed {
+            let name = boogie_spec_fun_name(module_env, fun_id, inst);
+            emit!(self.writer, "{}(", name);
+            let mut first = true;
+            let mut maybe_comma = || {
+                if first {
+                    first = false;
+                } else {
+                    emit!(self.writer, ", ");
+                }
+            };
+            let label_at = |i| memory_labels.as_ref().map(|labels| labels[i]);
+            let mut i = 0;
+            for memory in &fun_decl.used_memory {
+                let memory = &memory.to_owned().instantiate(inst);
+                maybe_comma();
+                let memory = boogie_resource_memory_name(self.env, memory, &label_at(i));
+                emit!(self.writer, &memory);
+                i = usize::saturating_add(i, 1);
+            }
+            for exp in args {
+                maybe_comma();
+                self.translate_exp(exp);
+            }
+            emit!(self.writer, ")");
         }
-        emit!(self.writer, ")");
     }
 
     fn translate_select(
@@ -1005,8 +1046,7 @@ impl<'env> SpecTranslator<'env> {
                     emit!(self.writer, "(var {} := {};\n", var_name, quant_var);
                 }
                 Type::ResourceDomain(mid, sid, inst_opt) => {
-                    let memory =
-                        &mid.qualified_inst(*sid, inst_opt.to_owned().unwrap_or_else(Vec::new));
+                    let memory = &mid.qualified_inst(*sid, inst_opt.to_owned().unwrap_or_default());
                     let addr_var = resource_vars.get(&var.name).unwrap();
                     let resource_name = boogie_resource_memory_name(self.env, memory, &None);
                     emit!(
@@ -1111,8 +1151,7 @@ impl<'env> SpecTranslator<'env> {
                 let quant_ty = self.get_node_type(range.node_id());
                 if let Type::ResourceDomain(mid, sid, inst_opt) = quant_ty.skip_reference() {
                     let addr_var = resource_vars.get(&var.name).unwrap();
-                    let memory =
-                        &mid.qualified_inst(*sid, inst_opt.to_owned().unwrap_or_else(Vec::new));
+                    let memory = &mid.qualified_inst(*sid, inst_opt.to_owned().unwrap_or_default());
                     let resource_name = boogie_resource_memory_name(self.env, memory, &None);
                     let resource_value = format!("$ResourceValue({}, {})", resource_name, addr_var);
                     emit!(self.writer, "{{{}}}", resource_value);
@@ -1363,12 +1402,12 @@ impl<'env> SpecTranslator<'env> {
                     };
                     emit!(
                         self.writer,
-                        &format!(" && $1_Signer_is_txn_signer({})", target)
+                        &format!(" && $1_signer_is_txn_signer({})", target)
                     );
                     emit!(
                         self.writer,
                         &format!(
-                            " && $1_Signer_is_txn_signer_addr($addr#$signer({}))",
+                            " && $1_signer_is_txn_signer_addr($addr#$signer({}))",
                             target
                         )
                     );

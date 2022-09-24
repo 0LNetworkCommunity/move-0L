@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use super::core::{self, Subst, TParamSubst};
@@ -300,7 +301,7 @@ fn cycle_error(
     .unwrap();
     assert!(!cycle_nodes.is_empty());
     let next = |i| (i + 1) % cycle_nodes.len();
-    let prev = |i: usize| i.checked_sub(1).unwrap_or_else(|| cycle_nodes.len() - 1);
+    let prev = |i: usize| i.checked_sub(1).unwrap_or(cycle_nodes.len() - 1);
 
     assert!(&cycle_nodes[0] == critical_head);
     let param_info = &context.tparam_type_arguments[cycle_nodes[0]][cycle_nodes[next(0)]];
@@ -386,6 +387,7 @@ fn cycle_error(
         TypeSafety::CyclicInstantiation,
         (call_loc, call_msg),
         secondary_labels,
+        std::iter::empty::<String>(),
     )
 }
 

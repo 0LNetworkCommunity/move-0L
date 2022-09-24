@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
@@ -12,12 +13,12 @@ use codespan_reporting::{
 #[allow(unused_imports)]
 use log::{debug, info, warn};
 use move_abigen::Abigen;
+use move_compiler::shared::PackagePaths;
 use move_docgen::Docgen;
 use move_errmapgen::ErrmapGen;
 use move_model::{
-    code_writer::CodeWriter,
-    model::{FunctionVisibility, GlobalEnv},
-    parse_addresses_from_options, run_model_builder_with_options,
+    code_writer::CodeWriter, model::GlobalEnv, parse_addresses_from_options,
+    run_model_builder_with_options,
 };
 use move_prover_boogie_backend::{
     add_prelude, boogie_wrapper::BoogieWrapper, bytecode_translator::BoogieTranslator,
@@ -51,11 +52,19 @@ pub fn run_move_prover<W: WriteColor>(
 ) -> anyhow::Result<()> {
     let now = Instant::now();
     // Run the model builder.
+    let addrs = parse_addresses_from_options(options.move_named_address_values.clone())?;
     let env = run_model_builder_with_options(
-        &options.move_sources,
-        &options.move_deps,
+        vec![PackagePaths {
+            name: None,
+            paths: options.move_sources.clone(),
+            named_address_map: addrs.clone(),
+        }],
+        vec![PackagePaths {
+            name: None,
+            paths: options.move_deps.clone(),
+            named_address_map: addrs,
+        }],
         options.model_builder.clone(),
-        parse_addresses_from_options(options.move_named_address_values.clone())?,
     )?;
     run_move_prover_with_model(&env, error_writer, options, Some(now))
 }
@@ -274,7 +283,7 @@ fn print_script_reach(env: &GlobalEnv) {
 
     for m in &target_modules {
         for f in m.get_functions() {
-            if matches!(f.visibility(), FunctionVisibility::Script) {
+            if f.is_entry() {
                 let qualified_id = f.get_qualified_id();
                 func_ids.insert(qualified_id);
                 let trans_funcs = f.get_transitive_closure_of_called_functions();

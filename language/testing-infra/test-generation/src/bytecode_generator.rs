@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -115,7 +116,7 @@ enum StackEffect {
 }
 
 /// Context containing information about a function
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct FunctionGenerationContext {
     pub function_handle_index: FunctionHandleIndex,
     pub starting_call_height: usize,
@@ -386,23 +387,23 @@ impl<'a> BytecodeGenerator<'a> {
                 }
                 BytecodeType::ConstantPoolIndex(instruction) => {
                     // Select a random address from the module's address pool
-                    Self::index_or_none(&module.constant_pool, &mut self.rng)
+                    Self::index_or_none(&module.constant_pool, self.rng)
                         .map(|x| instruction(ConstantPoolIndex::new(x)))
                 }
                 BytecodeType::StructIndex(instruction) => {
                     // Select a random struct definition and local signature
-                    Self::index_or_none(&module.struct_defs, &mut self.rng)
+                    Self::index_or_none(&module.struct_defs, self.rng)
                         .map(|x| instruction(StructDefinitionIndex::new(x)))
                 }
                 BytecodeType::FieldHandleIndex(instruction) => {
                     // Select a field definition from the module's field definitions
-                    Self::index_or_none(&module.field_handles, &mut self.rng)
+                    Self::index_or_none(&module.field_handles, self.rng)
                         .map(|x| instruction(FieldHandleIndex::new(x)))
                 }
                 BytecodeType::FunctionIndex(instruction) => {
                     // Select a random function handle and local signature
                     let callable_fns = &state.call_graph.can_call(fn_context.function_handle_index);
-                    Self::index_or_none(callable_fns, &mut self.rng)
+                    Self::index_or_none(callable_fns, self.rng)
                         .and_then(|handle_idx| {
                             Self::call_stack_backpressure(
                                 &state,
@@ -410,21 +411,21 @@ impl<'a> BytecodeGenerator<'a> {
                                 callable_fns[handle_idx as usize],
                             )
                         })
-                        .map(|handle| instruction(handle))
+                        .map(instruction)
                 }
                 BytecodeType::StructInstantiationIndex(instruction) => {
                     // Select a field definition from the module's field definitions
-                    Self::index_or_none(&module.struct_def_instantiations, &mut self.rng)
+                    Self::index_or_none(&module.struct_def_instantiations, self.rng)
                         .map(|x| instruction(StructDefInstantiationIndex::new(x)))
                 }
                 BytecodeType::FunctionInstantiationIndex(instruction) => {
                     // Select a field definition from the module's field definitions
-                    Self::index_or_none(&module.function_instantiations, &mut self.rng)
+                    Self::index_or_none(&module.function_instantiations, self.rng)
                         .map(|x| instruction(FunctionInstantiationIndex::new(x)))
                 }
                 BytecodeType::FieldInstantiationIndex(instruction) => {
                     // Select a field definition from the module's field definitions
-                    Self::index_or_none(&module.field_instantiations, &mut self.rng)
+                    Self::index_or_none(&module.field_instantiations, self.rng)
                         .map(|x| instruction(FieldInstantiationIndex::new(x)))
                 }
             };
@@ -443,7 +444,7 @@ impl<'a> BytecodeGenerator<'a> {
                     || unsatisfied_preconditions == 0
                 {
                     // The size of matches cannot be greater than the number of bytecode instructions
-                    verify!(matches.len() < usize::max_value());
+                    debug_assert!(matches.len() < usize::max_value());
                     matches.push((*stack_effect, instruction));
                 }
             }
@@ -573,7 +574,7 @@ impl<'a> BytecodeGenerator<'a> {
         exact: bool,
     ) -> Option<AbstractState> {
         // Bytecode will never be generated this large
-        assume!(bytecode.len() < usize::max_value());
+        debug_assert!(bytecode.len() < usize::max_value());
         debug!("**********************");
         debug!("State1: {}", state);
         debug!("Next instr: {:?}", instruction);
@@ -726,9 +727,9 @@ impl<'a> BytecodeGenerator<'a> {
         let number_of_blocks = self.rng.gen_range(1..=MAX_CFG_BLOCKS);
         // The number of basic blocks must be at least one based on the
         // generation range.
-        assume!(number_of_blocks > 0);
+        debug_assert!(number_of_blocks > 0);
         let mut cfg = CFG::new(
-            &mut self.rng,
+            self.rng,
             locals,
             &module.signatures[fh.parameters.0 as usize],
             number_of_blocks,
@@ -827,7 +828,7 @@ impl<'a> BytecodeGenerator<'a> {
         }
         // The CFG will be non-empty if we set the number of basic blocks to generate
         // to be non-zero
-        verify!(number_of_blocks > 0 || cfg.get_basic_blocks().is_empty());
+        debug_assert!(number_of_blocks > 0 || cfg.get_basic_blocks().is_empty());
         Some(cfg.serialize())
     }
 

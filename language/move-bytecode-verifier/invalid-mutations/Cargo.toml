@@ -1,7 +1,7 @@
 [package]
 name = "invalid-mutations"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 authors = ["Diem Association <opensource@diem.com>"]
 description = "Diem invalid mutations"
 repository = "https://github.com/diem/diem"
@@ -13,7 +13,6 @@ publish = false
 move-core-types = { path = "../../move-core/types" }
 move-binary-format = { path = "../../move-binary-format" }
 proptest = "1.0.0"
-workspace-hack = { version = "0.1", path = "../../../crates/workspace-hack" }
 
 [features]
 default = []

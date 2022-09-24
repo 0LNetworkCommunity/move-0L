@@ -1,7 +1,11 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::shared::{ast_debug::*, Identifier, Name, NumericalAddress, TName};
+use crate::shared::{
+    ast_debug::*, Identifier, Name, NamedAddressMap, NamedAddressMapIndex, NamedAddressMaps,
+    NumericalAddress, TName,
+};
 use move_command_line_common::files::FileHash;
 use move_ir_types::location::*;
 use move_symbol_pool::Symbol;
@@ -52,8 +56,16 @@ macro_rules! new_name {
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub source_definitions: Vec<Definition>,
-    pub lib_definitions: Vec<Definition>,
+    pub named_address_maps: NamedAddressMaps,
+    pub source_definitions: Vec<PackageDefinition>,
+    pub lib_definitions: Vec<PackageDefinition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PackageDefinition {
+    pub package: Option<Symbol>,
+    pub named_address_map: NamedAddressMapIndex,
+    pub def: Definition,
 }
 
 #[derive(Debug, Clone)]
@@ -189,7 +201,7 @@ new_name!(StructName);
 
 pub type ResourceLoc = Option<Loc>;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct StructTypeParameter {
     pub is_phantom: bool,
     pub name: Name,
@@ -218,6 +230,9 @@ pub enum StructFields {
 
 new_name!(FunctionName);
 
+pub const NATIVE_MODIFIER: &str = "native";
+pub const ENTRY_MODIFIER: &str = "entry";
+
 #[derive(PartialEq, Clone, Debug)]
 pub struct FunctionSignature {
     pub type_parameters: Vec<(Name, Vec<Ability>)>,
@@ -225,7 +240,7 @@ pub struct FunctionSignature {
     pub return_type: Type,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Visibility {
     Public(Loc),
     Script(Loc),
@@ -249,6 +264,7 @@ pub struct Function {
     pub attributes: Vec<Attributes>,
     pub loc: Loc,
     pub visibility: Visibility,
+    pub entry: Option<Loc>,
     pub signature: FunctionSignature,
     pub acquires: Vec<NameAccessChain>,
     pub name: FunctionName,
@@ -296,13 +312,13 @@ pub enum SpecBlockTarget_ {
 
 pub type SpecBlockTarget = Spanned<SpecBlockTarget_>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PragmaProperty_ {
     pub name: Name,
     pub value: Option<PragmaValue>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PragmaValue {
     Literal(Value),
     Ident(NameAccessChain),
@@ -310,7 +326,7 @@ pub enum PragmaValue {
 
 pub type PragmaProperty = Spanned<PragmaProperty_>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpecApplyPattern_ {
     pub visibility: Option<Visibility>,
     pub name_pattern: Vec<SpecApplyFragment>,
@@ -319,7 +335,7 @@ pub struct SpecApplyPattern_ {
 
 pub type SpecApplyPattern = Spanned<SpecApplyPattern_>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecApplyFragment_ {
     Wildcard,
     NamePart(Name),
@@ -375,7 +391,7 @@ pub enum SpecBlockMember_ {
 pub type SpecBlockMember = Spanned<SpecBlockMember_>;
 
 // Specification condition kind.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum SpecConditionKind_ {
     Assert,
     Assume,
@@ -473,14 +489,14 @@ pub enum Value_ {
 }
 pub type Value = Spanned<Value_>;
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum UnaryOp_ {
     // !
     Not,
 }
 pub type UnaryOp = Spanned<UnaryOp_>;
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum BinOp_ {
     // Int ops
     // +
@@ -532,7 +548,7 @@ pub enum BinOp_ {
 }
 pub type BinOp = Spanned<BinOp_>;
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum QuantKind_ {
     Forall,
     Exists,
@@ -958,14 +974,46 @@ impl fmt::Display for Ability_ {
 
 impl AstDebug for Program {
     fn ast_debug(&self, w: &mut AstWriter) {
-        w.write("------ Lib Defs: ------");
-        for src in &self.source_definitions {
-            src.ast_debug(w);
+        let Self {
+            named_address_maps,
+            source_definitions,
+            lib_definitions,
+        } = self;
+        w.writeln("------ Lib Defs: ------");
+        for def in lib_definitions {
+            ast_debug_package_definition(w, named_address_maps, def)
         }
         w.new_line();
-        w.write("------ Source Defs: ------");
-        for src in &self.source_definitions {
-            src.ast_debug(w);
+        w.writeln("------ Source Defs: ------");
+        for def in source_definitions {
+            ast_debug_package_definition(w, named_address_maps, def)
+        }
+    }
+}
+
+fn ast_debug_package_definition(
+    w: &mut AstWriter,
+    named_address_maps: &NamedAddressMaps,
+    pkg: &PackageDefinition,
+) {
+    let PackageDefinition {
+        package,
+        named_address_map,
+        def,
+    } = pkg;
+    match package {
+        Some(n) => w.writeln(&format!("package: {}", n)),
+        None => w.writeln("no package"),
+    }
+    named_address_maps.get(*named_address_map).ast_debug(w);
+    def.ast_debug(w);
+}
+
+impl AstDebug for NamedAddressMap {
+    fn ast_debug(&self, w: &mut AstWriter) {
+        for (sym, addr) in self {
+            w.write(&format!("{} => {}", sym, addr));
+            w.new_line()
         }
     }
 }
@@ -1413,6 +1461,7 @@ impl AstDebug for Function {
             attributes,
             loc: _loc,
             visibility,
+            entry,
             signature,
             acquires,
             name,
@@ -1420,6 +1469,9 @@ impl AstDebug for Function {
         } = self;
         attributes.ast_debug(w);
         visibility.ast_debug(w);
+        if entry.is_some() {
+            w.write(&format!("{} ", ENTRY_MODIFIER));
+        }
         if let FunctionBody_::Native = &body.value {
             w.write("native ");
         }

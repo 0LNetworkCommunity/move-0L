@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::compiler::{as_module, compile_units};
@@ -11,7 +12,7 @@ use move_core_types::{
 };
 use move_vm_runtime::move_vm::MoveVM;
 use move_vm_test_utils::{BlankStorage, InMemoryStorage};
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_types::gas::UnmeteredGasMeter;
 
 const TEST_ADDR: AccountAddress = AccountAddress::new([42; AccountAddress::LENGTH]);
 
@@ -23,15 +24,14 @@ fn call_non_existent_module() {
     let mut sess = vm.new_session(&storage);
     let module_id = ModuleId::new(TEST_ADDR, Identifier::new("M").unwrap());
     let fun_name = Identifier::new("foo").unwrap();
-    let mut gas_status = GasStatus::new_unmetered();
 
     let err = sess
-        .execute_function(
+        .execute_function_bypass_visibility(
             &module_id,
             &fun_name,
             vec![],
             serialize_values(&vec![MoveValue::Signer(TEST_ADDR)]),
-            &mut gas_status,
+            &mut UnmeteredGasMeter,
         )
         .unwrap_err();
 
@@ -43,7 +43,7 @@ fn call_non_existent_function() {
     let code = r#"
         module {{ADDR}}::M {}
     "#;
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
 
     let mut units = compile_units(&code).unwrap();
     let m = as_module(units.pop().unwrap());
@@ -58,15 +58,14 @@ fn call_non_existent_function() {
     let mut sess = vm.new_session(&storage);
 
     let fun_name = Identifier::new("foo").unwrap();
-    let mut gas_status = GasStatus::new_unmetered();
 
     let err = sess
-        .execute_function(
+        .execute_function_bypass_visibility(
             &module_id,
             &fun_name,
             vec![],
             serialize_values(&vec![MoveValue::Signer(TEST_ADDR)]),
-            &mut gas_status,
+            &mut UnmeteredGasMeter,
         )
         .unwrap_err();
 

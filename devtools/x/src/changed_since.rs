@@ -1,15 +1,16 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{context::XContext, Result};
 use anyhow::Context;
+use clap::Parser;
 use determinator::Determinator;
 use guppy::graph::{DependencyDirection, PackageSet};
 use log::trace;
-use structopt::StructOpt;
 use x_core::git::GitCli;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct Args {
     /// List packages changed since this commit
     pub(crate) base: String,

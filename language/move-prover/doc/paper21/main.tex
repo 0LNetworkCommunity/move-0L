@@ -1,25 +1,24 @@
 \UseRawInputEncoding
-\documentclass[runningheads]{llncs}
-%\sloppy
+\documentclass[runningheads,openbib]{llncs}
 
 \input{prelude.tex}
 
-%\overfullrule=1mm
-
+%\renewcommand\UrlFont{\color{blue}\rmfamily}
 
 \begin{document}
 
-
 \author{
-  David Dill\inst{1} \and Wolfgang Grieskamp\inst{1} \and \\ Junkil
-  Park\inst{1} \and Shaz Qadeer\inst{1} \and Meng Xu\inst{1}
-  \and Emma Zhong\inst{1}
+  David Dill \and Wolfgang Grieskamp(\Envelope)\thanks{\mailname~\email{wgrieskamp@gmail.com}} \and \\ Junkil
+  Park \and Shaz Qadeer \and Meng Xu \and Emma Zhong
 }
 
-\institute{Novi Research, Facebook}
+\institute{Novi Research, Meta Platforms, Menlo Park, USA}
+  %\\\email{\{dill,wrwg,jkpark,shaz,mengxu,emmazjy\}@fb.com}}
 \authorrunning{D. Dill, W. Grieskamp et. al.}
 
-\title{Fast and Reliable Formal Verification of Smart Contracts with the Move Prover}
+\title{Fast and Reliable Formal Verification of Smart Contracts with the Move
+  Prover\thanks{To appear in TACAS'22. This is the extended version with
+    appendices.}}
 
 \maketitle
 \begin{abstract}
@@ -53,15 +52,22 @@ Clark Barrett, Dario Russi, Jack Moffitt, Jake Silverman, Mathieu Baudet,
 Runtian Zhou, Sam Blackshear, Tim Zakian, Todd Nowacki, Victor Gao, and Kevin
 Cheang.
 
+\appendix
+\newpage
+\input{function-injection-apx.tex}
+\input{corrected_example-apx.tex}
+
 \newpage
 \bibliographystyle{splncs04}
 \bibliography{biblio}
 
-\appendix
-\newpage
-\input{function-injection-apx.tex}
-\newpage
-\input{corrected_example-apx.tex}
+\vfill
+
+{\small\medskip\noindent{\bf Open Access} This chapter is licensed under the terms of the Creative Commons\break Attribution 4.0 International License (\url{http://creativecommons.org/licenses/by/4.0/}), which permits use, sharing, adaptation, distribution and reproduction in any medium or format, as long as you give appropriate credit to the original author(s) and the source, provide a link to the Creative Commons license and indicate if changes were made.}
+
+{\small \spaceskip .28em plus .1em minus .1em The images or other third party material in this chapter are included in the chapter's Creative Commons license, unless indicated otherwise in a credit line to the material.~If material is not included in the chapter's Creative Commons license and your intended\break use is not permitted by statutory regulation or exceeds the permitted use, you will need to obtain permission directly from the copyright holder.}
+
+\medskip\noindent\includegraphics{cc_by_4-0.eps}
 
 
 \end{document}

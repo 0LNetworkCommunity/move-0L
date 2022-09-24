@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //**************************************************************************************************
@@ -10,20 +11,18 @@ use crate::{
     diag,
     diagnostics::{
         codes::{DiagnosticCode, ReferenceSafety},
-        Diagnostics,
+        Diagnostic, Diagnostics,
     },
     hlir::{
         ast::{TypeName_, *},
         translate::{display_var, DisplayVar},
     },
     parser::ast::{Field, StructName, Var},
-    shared::*,
+    shared::{unique_map::UniqueMap, *},
 };
+use move_borrow_graph::references::RefID;
 use move_ir_types::location::*;
 use move_symbol_pool::Symbol;
-
-use crate::shared::unique_map::UniqueMap;
-use move_borrow_graph::references::RefID;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -42,7 +41,7 @@ pub enum Value {
 }
 pub type Values = Vec<Value>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorrowState {
     locals: UniqueMap<Var, Value>,
     acquired_resources: BTreeMap<StructName, Loc>,
@@ -108,9 +107,9 @@ impl BorrowState {
         field_borrows: &BTreeMap<Label, BTreeMap<RefID, Loc>>,
         code: impl DiagnosticCode,
         msg: F,
-    ) -> Diagnostics {
+    ) -> Option<Diagnostic> {
         if full_borrows.is_empty() && field_borrows.is_empty() {
-            return Diagnostics::new();
+            return None;
         }
 
         let mut_adj = |id| {
@@ -147,8 +146,8 @@ impl BorrowState {
                 ))
             }
         }
-        assert!(diag.secondary_labels_len() >= 1);
-        Diagnostics::from(vec![diag])
+        assert!(diag.extra_labels_len() >= 1);
+        Some(diag)
     }
 
     const LOCAL_ROOT: RefID = RefID::new(0);
@@ -225,6 +224,7 @@ impl BorrowState {
             ReferenceSafety::Dangling,
             msg,
         )
+        .into()
     }
 
     fn freezable<F: Fn() -> String>(
@@ -270,6 +270,7 @@ impl BorrowState {
             code,
             msg,
         )
+        .into()
     }
 
     fn readable<F: Fn() -> String>(
@@ -306,7 +307,7 @@ impl BorrowState {
         assert!(full_borrows.is_empty());
         field_borrows
             .remove(&Self::local_label(local))
-            .unwrap_or_else(BTreeMap::new)
+            .unwrap_or_default()
     }
 
     fn resource_borrowed_by(&self, resource: &StructName) -> BTreeMap<RefID, Loc> {
@@ -314,7 +315,7 @@ impl BorrowState {
         assert!(full_borrows.is_empty());
         field_borrows
             .remove(&Self::resource_label(resource))
-            .unwrap_or_else(BTreeMap::new)
+            .unwrap_or_default()
     }
 
     // returns empty errors if borrowed_by is empty
@@ -326,7 +327,7 @@ impl BorrowState {
         full_borrows: &BTreeMap<RefID, Loc>,
         code: impl DiagnosticCode,
         verb: &'static str,
-    ) -> Diagnostics {
+    ) -> Option<Diagnostic> {
         Self::borrow_error(
             borrows,
             loc,
@@ -338,7 +339,7 @@ impl BorrowState {
                     DisplayVar::Tmp => panic!("ICE invalid use of tmp local {}", local.value()),
                     DisplayVar::Orig(s) => s,
                 };
-                format!("Invalid {} of local '{}'", verb, local_str)
+                format!("Invalid {} of variable '{}'", verb, local_str)
             },
         )
     }
@@ -385,6 +386,7 @@ impl BorrowState {
                     ReferenceSafety::Dangling,
                     "assignment",
                 )
+                .into()
             }
         }
     }
@@ -421,7 +423,7 @@ impl BorrowState {
         for (local, stored_value) in self.locals.key_cloned_iter() {
             if let Value::NonRef = stored_value {
                 let borrowed_by = self.local_borrowed_by(&local);
-                let local_diags = Self::borrow_error(
+                let local_diag = Self::borrow_error(
                     &self.borrows,
                     loc,
                     &borrowed_by,
@@ -434,14 +436,14 @@ impl BorrowState {
                         )
                     },
                 );
-                diags.extend(local_diags)
+                diags.add_opt(local_diag)
             }
         }
 
         // Check resources are not borrowed
         for resource in self.acquired_resources.keys() {
             let borrowed_by = self.resource_borrowed_by(resource);
-            let resource_diags = Self::borrow_error(
+            let resource_diag = Self::borrow_error(
                 &self.borrows,
                 loc,
                 &borrowed_by,
@@ -454,7 +456,8 @@ impl BorrowState {
                     )
                 },
             );
-            diags.extend(resource_diags)
+
+            diags.add_opt(resource_diag)
         }
 
         // check any returned reference is not borrowed
@@ -475,7 +478,7 @@ impl BorrowState {
                         ReferenceSafety::InvalidTransfer,
                         msg,
                     );
-                    diags.extend(ds);
+                    diags.add_opt(ds);
                 }
                 _ => (),
             }
@@ -493,14 +496,59 @@ impl BorrowState {
     // Expression Entry Points
     //**********************************************************************************************
 
-    pub fn move_local(&mut self, loc: Loc, local: &Var) -> (Diagnostics, Value) {
+    pub fn move_local(
+        &mut self,
+        loc: Loc,
+        local: &Var,
+        last_usage_inferred: bool,
+    ) -> (Diagnostics, Value) {
         let old_value = self.locals.remove(local).unwrap();
         self.locals.add(*local, Value::NonRef).unwrap();
         match old_value {
             Value::Ref(id) => (Diagnostics::new(), Value::Ref(id)),
+            Value::NonRef if last_usage_inferred => {
+                let borrowed_by = self.local_borrowed_by(local);
+
+                let mut diag_opt = Self::borrow_error(
+                    &self.borrows,
+                    loc,
+                    &borrowed_by,
+                    &BTreeMap::new(),
+                    ReferenceSafety::AmbiguousVariableUsage,
+                    || {
+                        let vstr = match display_var(local.value()) {
+                            DisplayVar::Tmp => {
+                                panic!("ICE invalid use tmp local {}", local.value())
+                            }
+                            DisplayVar::Orig(s) => s,
+                        };
+                        format!("Ambiguous usage of variable '{}'", vstr)
+                    },
+                );
+                diag_opt.iter_mut().for_each(|diag| {
+                    let vstr = match display_var(local.value()) {
+                        DisplayVar::Tmp => {
+                            panic!("ICE invalid use tmp local {}", local.value())
+                        }
+                        DisplayVar::Orig(s) => s,
+                    };
+                    let tip = format!(
+                        "Try an explicit annotation, e.g. 'move {v}' or 'copy {v}'",
+                        v = vstr
+                    );
+                    const EXPLANATION: &str = "Ambiguous inference of 'move' or 'copy' for a \
+                                               borrowed variable's last usage: A 'move' would \
+                                               invalidate the borrowing reference, but a 'copy' \
+                                               might not be the expected implicit behavior since \
+                                               this the last direct usage of the variable.";
+                    diag.add_secondary_label((loc, tip));
+                    diag.add_note(EXPLANATION);
+                });
+                (diag_opt.into(), Value::NonRef)
+            }
             Value::NonRef => {
                 let borrowed_by = self.local_borrowed_by(local);
-                let diags = Self::check_use_borrowed_by(
+                let diag_opt = Self::check_use_borrowed_by(
                     &self.borrows,
                     loc,
                     local,
@@ -508,7 +556,7 @@ impl BorrowState {
                     ReferenceSafety::Dangling,
                     "move",
                 );
-                (diags, Value::NonRef)
+                (diag_opt.into(), Value::NonRef)
             }
         }
     }
@@ -537,7 +585,7 @@ impl BorrowState {
                     ReferenceSafety::MutOwns,
                     "copy",
                 );
-                (diags, Value::NonRef)
+                (diags.into(), Value::NonRef)
             }
         }
     }
@@ -566,6 +614,7 @@ impl BorrowState {
                 ReferenceSafety::RefTrans,
                 "borrow",
             )
+            .into()
         } else {
             Diagnostics::new()
         };
@@ -654,6 +703,7 @@ impl BorrowState {
                 ReferenceSafety::MutOwns,
                 msg,
             )
+            .into()
         } else {
             let msg = || format!("Invalid immutable borrow at field '{}'.", field);
             self.readable(loc, ReferenceSafety::RefTrans, msg, id, Some(field))
@@ -697,7 +747,7 @@ impl BorrowState {
             )
         };
         self.add_resource_borrow(loc, resource, new_id);
-        (diags, Value::Ref(new_id))
+        (diags.into(), Value::Ref(new_id))
     }
 
     pub fn move_from(&mut self, loc: Loc, t: &BaseType) -> (Diagnostics, Value) {
@@ -716,7 +766,7 @@ impl BorrowState {
             ReferenceSafety::Dangling,
             msg,
         );
-        (diags, Value::NonRef)
+        (diags.into(), Value::NonRef)
     }
 
     pub fn call(
@@ -741,7 +791,7 @@ impl BorrowState {
                 ReferenceSafety::Dangling,
                 msg,
             );
-            diags.extend(ds);
+            diags.add_opt(ds);
         }
 
         // Check mutable arguments are not borrowed
@@ -762,7 +812,7 @@ impl BorrowState {
                     ReferenceSafety::InvalidTransfer,
                     msg,
                 );
-                diags.extend(ds);
+                diags.add_opt(ds);
             });
 
         let mut all_parents = BTreeSet::new();

@@ -1,11 +1,12 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::compiler::{as_module, as_script, compile_units};
 use move_binary_format::errors::{Location, PartialVMError, VMError};
 use move_core_types::{
     account_address::AccountAddress,
-    effects::ChangeSet,
+    effects::{ChangeSet, Op},
     identifier::Identifier,
     language_storage::{ModuleId, StructTag},
     resolver::{ModuleResolver, ResourceResolver},
@@ -14,7 +15,7 @@ use move_core_types::{
 };
 use move_vm_runtime::move_vm::MoveVM;
 use move_vm_test_utils::{DeltaStorage, InMemoryStorage};
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_types::gas::UnmeteredGasMeter;
 
 const TEST_ADDR: AccountAddress = AccountAddress::new([42; AccountAddress::LENGTH]);
 
@@ -23,8 +24,8 @@ fn test_malformed_resource() {
     // Compile the modules and scripts.
     // TODO: find a better way to include the Signer module.
     let code = r#"
-        address Std {
-            module Signer {
+        address std {
+            module signer {
                 native public fun borrow_address(s: &signer): &address;
 
                 public fun address_of(s: &signer): address {
@@ -34,7 +35,7 @@ fn test_malformed_resource() {
         }
 
         module {{ADDR}}::M {
-            use Std::Signer;
+            use std::signer;
 
             struct Foo has key { x: u64, y: bool }
 
@@ -43,7 +44,7 @@ fn test_malformed_resource() {
             }
 
             public fun check(s: &signer) acquires Foo {
-                let foo = borrow_global<Foo>(Signer::address_of(s));
+                let foo = borrow_global<Foo>(signer::address_of(s));
                 assert!(foo.x == 123 && foo.y == false, 42);
             }
         }
@@ -64,7 +65,7 @@ fn test_malformed_resource() {
             }
         }
     "#;
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
     let mut units = compile_units(&code).unwrap();
 
     let s2 = as_script(units.pop().unwrap());
@@ -85,10 +86,9 @@ fn test_malformed_resource() {
 
     let vm = MoveVM::new(move_stdlib::natives::all_natives(
         AccountAddress::from_hex_literal("0x1").unwrap(),
+        move_stdlib::natives::GasParameters::zeros(),
     ))
     .unwrap();
-
-    let mut gas_status = GasStatus::new_unmetered();
 
     // Execute the first script to publish a resource Foo.
     let mut script_blob = vec![];
@@ -97,10 +97,10 @@ fn test_malformed_resource() {
     sess.execute_script(
         script_blob,
         vec![],
-        vec![],
-        vec![TEST_ADDR],
-        &mut gas_status,
+        vec![MoveValue::Signer(TEST_ADDR).simple_serialize().unwrap()],
+        &mut UnmeteredGasMeter,
     )
+    .map(|_| ())
     .unwrap();
     let (changeset, _) = sess.finish().unwrap();
     storage.apply(changeset).unwrap();
@@ -115,10 +115,10 @@ fn test_malformed_resource() {
         sess.execute_script(
             script_blob.clone(),
             vec![],
-            vec![],
-            vec![TEST_ADDR],
-            &mut gas_status,
+            vec![MoveValue::Signer(TEST_ADDR).simple_serialize().unwrap()],
+            &mut UnmeteredGasMeter,
         )
+        .map(|_| ())
         .unwrap();
     }
 
@@ -142,10 +142,10 @@ fn test_malformed_resource() {
             .execute_script(
                 script_blob,
                 vec![],
-                vec![],
-                vec![TEST_ADDR],
-                &mut gas_status,
+                vec![MoveValue::Signer(TEST_ADDR).simple_serialize().unwrap()],
+                &mut UnmeteredGasMeter,
             )
+            .map(|_| ())
             .unwrap_err();
         assert_eq!(err.status_type(), StatusType::InvariantViolation);
     }
@@ -160,7 +160,7 @@ fn test_malformed_module() {
         }
     "#;
 
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
     let mut units = compile_units(&code).unwrap();
 
     let m = as_module(units.pop().unwrap());
@@ -171,16 +171,20 @@ fn test_malformed_module() {
     let module_id = ModuleId::new(TEST_ADDR, Identifier::new("M").unwrap());
     let fun_name = Identifier::new("foo").unwrap();
 
-    let mut gas_status = GasStatus::new_unmetered();
-
     // Publish M and call M::foo. No errors should be thrown.
     {
         let mut storage = InMemoryStorage::new();
         storage.publish_or_overwrite_module(m.self_id(), blob.clone());
         let vm = MoveVM::new(vec![]).unwrap();
         let mut sess = vm.new_session(&storage);
-        sess.execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
-            .unwrap();
+        sess.execute_function_bypass_visibility(
+            &module_id,
+            &fun_name,
+            vec![],
+            Vec::<Vec<u8>>::new(),
+            &mut UnmeteredGasMeter,
+        )
+        .unwrap();
     }
 
     // Start over with a fresh storage and publish a corrupted version of M.
@@ -199,7 +203,13 @@ fn test_malformed_module() {
         let vm = MoveVM::new(vec![]).unwrap();
         let mut sess = vm.new_session(&storage);
         let err = sess
-            .execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
+            .execute_function_bypass_visibility(
+                &module_id,
+                &fun_name,
+                vec![],
+                Vec::<Vec<u8>>::new(),
+                &mut UnmeteredGasMeter,
+            )
             .unwrap_err();
         assert_eq!(err.status_type(), StatusType::InvariantViolation);
     }
@@ -214,11 +224,10 @@ fn test_unverifiable_module() {
         }
     "#;
 
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
     let mut units = compile_units(&code).unwrap();
     let m = as_module(units.pop().unwrap());
 
-    let mut gas_status = GasStatus::new_unmetered();
     let module_id = ModuleId::new(TEST_ADDR, Identifier::new("M").unwrap());
     let fun_name = Identifier::new("foo").unwrap();
 
@@ -233,8 +242,14 @@ fn test_unverifiable_module() {
         let vm = MoveVM::new(vec![]).unwrap();
         let mut sess = vm.new_session(&storage);
 
-        sess.execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
-            .unwrap();
+        sess.execute_function_bypass_visibility(
+            &module_id,
+            &fun_name,
+            vec![],
+            Vec::<Vec<u8>>::new(),
+            &mut UnmeteredGasMeter,
+        )
+        .unwrap();
     }
 
     // Erase the body of M::foo to make it fail verification.
@@ -252,7 +267,13 @@ fn test_unverifiable_module() {
         let mut sess = vm.new_session(&storage);
 
         let err = sess
-            .execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
+            .execute_function_bypass_visibility(
+                &module_id,
+                &fun_name,
+                vec![],
+                Vec::<Vec<u8>>::new(),
+                &mut UnmeteredGasMeter,
+            )
             .unwrap_err();
 
         assert_eq!(err.status_type(), StatusType::InvariantViolation);
@@ -273,7 +294,7 @@ fn test_missing_module_dependency() {
             public fun bar() { M::foo(); }
         }
     "#;
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
     let mut units = compile_units(&code).unwrap();
     let n = as_module(units.pop().unwrap());
     let m = as_module(units.pop().unwrap());
@@ -282,8 +303,6 @@ fn test_missing_module_dependency() {
     m.serialize(&mut blob_m).unwrap();
     let mut blob_n = vec![];
     n.serialize(&mut blob_n).unwrap();
-
-    let mut gas_status = GasStatus::new_unmetered();
 
     let module_id = ModuleId::new(TEST_ADDR, Identifier::new("N").unwrap());
     let fun_name = Identifier::new("bar").unwrap();
@@ -298,8 +317,14 @@ fn test_missing_module_dependency() {
         let vm = MoveVM::new(vec![]).unwrap();
         let mut sess = vm.new_session(&storage);
 
-        sess.execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
-            .unwrap();
+        sess.execute_function_bypass_visibility(
+            &module_id,
+            &fun_name,
+            vec![],
+            Vec::<Vec<u8>>::new(),
+            &mut UnmeteredGasMeter,
+        )
+        .unwrap();
     }
 
     // Publish only N and try to call N::bar. The VM should fail to find M and raise
@@ -312,7 +337,13 @@ fn test_missing_module_dependency() {
         let mut sess = vm.new_session(&storage);
 
         let err = sess
-            .execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
+            .execute_function_bypass_visibility(
+                &module_id,
+                &fun_name,
+                vec![],
+                Vec::<Vec<u8>>::new(),
+                &mut UnmeteredGasMeter,
+            )
             .unwrap_err();
 
         assert_eq!(err.status_type(), StatusType::InvariantViolation);
@@ -333,7 +364,7 @@ fn test_malformed_module_denpency() {
             public fun bar() { M::foo(); }
         }
     "#;
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
     let mut units = compile_units(&code).unwrap();
     let n = as_module(units.pop().unwrap());
     let m = as_module(units.pop().unwrap());
@@ -342,8 +373,6 @@ fn test_malformed_module_denpency() {
     m.serialize(&mut blob_m).unwrap();
     let mut blob_n = vec![];
     n.serialize(&mut blob_n).unwrap();
-
-    let mut gas_status = GasStatus::new_unmetered();
 
     let module_id = ModuleId::new(TEST_ADDR, Identifier::new("N").unwrap());
     let fun_name = Identifier::new("bar").unwrap();
@@ -358,8 +387,14 @@ fn test_malformed_module_denpency() {
         let vm = MoveVM::new(vec![]).unwrap();
         let mut sess = vm.new_session(&storage);
 
-        sess.execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
-            .unwrap();
+        sess.execute_function_bypass_visibility(
+            &module_id,
+            &fun_name,
+            vec![],
+            Vec::<Vec<u8>>::new(),
+            &mut UnmeteredGasMeter,
+        )
+        .unwrap();
     }
 
     // Publish N and a corrupted version of M and try to call N::bar, the VM should fail to load M.
@@ -378,7 +413,13 @@ fn test_malformed_module_denpency() {
         let mut sess = vm.new_session(&storage);
 
         let err = sess
-            .execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
+            .execute_function_bypass_visibility(
+                &module_id,
+                &fun_name,
+                vec![],
+                Vec::<Vec<u8>>::new(),
+                &mut UnmeteredGasMeter,
+            )
             .unwrap_err();
 
         assert_eq!(err.status_type(), StatusType::InvariantViolation);
@@ -399,15 +440,13 @@ fn test_unverifiable_module_dependency() {
             public fun bar() { M::foo(); }
         }
     "#;
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
     let mut units = compile_units(&code).unwrap();
     let n = as_module(units.pop().unwrap());
     let m = as_module(units.pop().unwrap());
 
     let mut blob_n = vec![];
     n.serialize(&mut blob_n).unwrap();
-
-    let mut gas_status = GasStatus::new_unmetered();
 
     let module_id = ModuleId::new(TEST_ADDR, Identifier::new("N").unwrap());
     let fun_name = Identifier::new("bar").unwrap();
@@ -425,8 +464,14 @@ fn test_unverifiable_module_dependency() {
         let vm = MoveVM::new(vec![]).unwrap();
         let mut sess = vm.new_session(&storage);
 
-        sess.execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
-            .unwrap();
+        sess.execute_function_bypass_visibility(
+            &module_id,
+            &fun_name,
+            vec![],
+            Vec::<Vec<u8>>::new(),
+            &mut UnmeteredGasMeter,
+        )
+        .unwrap();
     }
 
     // Publish N and an unverifiable version of M and try to call N::bar, the VM should fail to load M.
@@ -445,7 +490,13 @@ fn test_unverifiable_module_dependency() {
         let mut sess = vm.new_session(&storage);
 
         let err = sess
-            .execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
+            .execute_function_bypass_visibility(
+                &module_id,
+                &fun_name,
+                vec![],
+                Vec::<Vec<u8>>::new(),
+                &mut UnmeteredGasMeter,
+            )
             .unwrap_err();
 
         assert_eq!(err.status_type(), StatusType::InvariantViolation);
@@ -488,7 +539,6 @@ const LIST_OF_ERROR_CODES: &[StatusCode] = &[
 
 #[test]
 fn test_storage_returns_bogus_error_when_loading_module() {
-    let mut gas_status = GasStatus::new_unmetered();
     let module_id = ModuleId::new(TEST_ADDR, Identifier::new("N").unwrap());
     let fun_name = Identifier::new("bar").unwrap();
 
@@ -500,7 +550,13 @@ fn test_storage_returns_bogus_error_when_loading_module() {
         let mut sess = vm.new_session(&storage);
 
         let err = sess
-            .execute_function(&module_id, &fun_name, vec![], vec![], &mut gas_status)
+            .execute_function_bypass_visibility(
+                &module_id,
+                &fun_name,
+                vec![],
+                Vec::<Vec<u8>>::new(),
+                &mut UnmeteredGasMeter,
+            )
             .unwrap_err();
 
         assert_eq!(err.status_type(), StatusType::InvariantViolation);
@@ -509,11 +565,9 @@ fn test_storage_returns_bogus_error_when_loading_module() {
 
 #[test]
 fn test_storage_returns_bogus_error_when_loading_resource() {
-    let mut gas_status = GasStatus::new_unmetered();
-
     let code = r#"
-        address Std {
-            module Signer {
+        address std {
+            module signer {
                 native public fun borrow_address(s: &signer): &address;
 
                 public fun address_of(s: &signer): address {
@@ -523,18 +577,18 @@ fn test_storage_returns_bogus_error_when_loading_resource() {
         }
 
         module {{ADDR}}::M {
-            use Std::Signer;
+            use std::signer;
 
             struct R has key {}
 
             public fun foo() {}
 
             public fun bar(sender: &signer) acquires R {
-                _ = borrow_global<R>(Signer::address_of(sender));
+                _ = borrow_global<R>(signer::address_of(sender));
             }
         }
     "#;
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
 
     let mut units = compile_units(&code).unwrap();
     let m = as_module(units.pop().unwrap());
@@ -544,8 +598,8 @@ fn test_storage_returns_bogus_error_when_loading_resource() {
     m.serialize(&mut m_blob).unwrap();
     s.serialize(&mut s_blob).unwrap();
     let mut delta = ChangeSet::new();
-    delta.publish_module(m.self_id(), m_blob).unwrap();
-    delta.publish_module(s.self_id(), s_blob).unwrap();
+    delta.add_module_op(m.self_id(), Op::New(m_blob)).unwrap();
+    delta.add_module_op(s.self_id(), Op::New(s_blob)).unwrap();
 
     let m_id = m.self_id();
     let foo_name = Identifier::new("foo").unwrap();
@@ -559,20 +613,27 @@ fn test_storage_returns_bogus_error_when_loading_resource() {
 
         let vm = MoveVM::new(move_stdlib::natives::all_natives(
             AccountAddress::from_hex_literal("0x1").unwrap(),
+            move_stdlib::natives::GasParameters::zeros(),
         ))
         .unwrap();
         let mut sess = vm.new_session(&storage);
 
-        sess.execute_function(&m_id, &foo_name, vec![], vec![], &mut gas_status)
-            .unwrap();
+        sess.execute_function_bypass_visibility(
+            &m_id,
+            &foo_name,
+            vec![],
+            Vec::<Vec<u8>>::new(),
+            &mut UnmeteredGasMeter,
+        )
+        .unwrap();
 
         let err = sess
-            .execute_function(
+            .execute_function_bypass_visibility(
                 &m_id,
                 &bar_name,
                 vec![],
                 serialize_values(&vec![MoveValue::Signer(TEST_ADDR)]),
-                &mut gas_status,
+                &mut UnmeteredGasMeter,
             )
             .unwrap_err();
 

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
@@ -6,6 +7,7 @@
 #[macro_use(sp)]
 extern crate move_ir_types;
 
+mod attr_derivation;
 pub mod cfgir;
 pub mod command_line;
 pub mod compiled_unit;
@@ -20,6 +22,7 @@ pub mod shared;
 mod to_bytecode;
 pub mod typing;
 pub mod unit_test;
+pub mod verification;
 
 pub use command_line::{
     compiler::{

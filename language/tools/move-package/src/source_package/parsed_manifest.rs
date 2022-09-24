@@ -1,6 +1,8 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::Architecture;
 use move_core_types::account_address::AccountAddress;
 use move_symbol_pool::symbol::Symbol;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -32,6 +34,7 @@ pub struct PackageInfo {
     pub version: Version,
     pub authors: Vec<Symbol>,
     pub license: Option<Symbol>,
+    pub custom_properties: BTreeMap<Symbol, String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -41,6 +44,7 @@ pub struct Dependency {
     pub version: Option<Version>,
     pub digest: Option<PackageDigest>,
     pub git_info: Option<GitInfo>,
+    pub node_info: Option<CustomDepInfo>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -56,9 +60,23 @@ pub struct GitInfo {
     pub download_to: PathBuf,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CustomDepInfo {
+    /// The url of the node to download from
+    pub node_url: Symbol,
+    /// The address where the package is published. The representation depends
+    /// on the registered node resolver.
+    pub package_address: Symbol,
+    /// The address where the package is published.
+    pub package_name: Symbol,
+    /// Where the package is downloaded to.
+    pub download_to: PathBuf,
+}
+
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct BuildInfo {
     pub language_version: Option<Version>,
+    pub architecture: Option<Architecture>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

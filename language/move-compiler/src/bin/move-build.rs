@@ -1,23 +1,35 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
 
+use clap::*;
+use move_command_line_common::files::verify_and_create_named_address_mapping;
 use move_compiler::{
     command_line::{self as cli},
-    shared::{self, verify_and_create_named_address_mapping, Flags, NumericalAddress},
+    shared::{self, Flags, NumericalAddress},
 };
-use structopt::*;
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "Move Build", about = "Compile Move source to Move bytecode.")]
+#[derive(Debug, Parser)]
+#[clap(
+    name = "move-build",
+    about = "Compile Move source to Move bytecode",
+    author,
+    version
+)]
 pub struct Options {
     /// The source files to check and compile
-    #[structopt(name = "PATH_TO_SOURCE_FILE")]
+    #[clap(
+        name = "PATH_TO_SOURCE_FILE",
+        takes_value(true),
+        multiple_values(true),
+        multiple_occurrences(true)
+    )]
     pub source_files: Vec<String>,
 
     /// The library files needed as dependencies
-    #[structopt(
+    #[clap(
         name = "PATH_TO_DEPENDENCY_FILE",
         short = cli::DEPENDENCY_SHORT,
         long = cli::DEPENDENCY,
@@ -25,7 +37,7 @@ pub struct Options {
     pub dependencies: Vec<String>,
 
     /// The Move bytecode output directory
-    #[structopt(
+    #[clap(
         name = "PATH_TO_OUTPUT_DIRECTORY",
         short = cli::OUT_DIR_SHORT,
         long = cli::OUT_DIR,
@@ -34,7 +46,7 @@ pub struct Options {
     pub out_dir: String,
 
     /// Save bytecode source map to disk
-    #[structopt(
+    #[clap(
         name = "",
         short = cli::SOURCE_MAP_SHORT,
         long = cli::SOURCE_MAP,
@@ -42,15 +54,15 @@ pub struct Options {
     pub emit_source_map: bool,
 
     /// Named address mapping
-    #[structopt(
+    #[clap(
         name = "NAMED_ADDRESSES",
-        short = "a",
+        short = 'a',
         long = "addresses",
         parse(try_from_str = shared::parse_named_address)
     )]
     pub named_addresses: Vec<(String, NumericalAddress)>,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub flags: Flags,
 }
 
@@ -62,13 +74,21 @@ pub fn main() -> anyhow::Result<()> {
         emit_source_map,
         flags,
         named_addresses,
-    } = Options::from_args();
+    } = Options::parse();
 
     let interface_files_dir = format!("{}/generated_interface_files", out_dir);
-    let (files, compiled_units) = move_compiler::Compiler::new(&source_files, &dependencies)
-        .set_interface_files_dir(interface_files_dir)
-        .set_flags(flags)
-        .set_named_address_values(verify_and_create_named_address_mapping(named_addresses)?)
-        .build_and_report()?;
-    move_compiler::output_compiled_units(emit_source_map, files, compiled_units, &out_dir)
+    let named_addr_map = verify_and_create_named_address_mapping(named_addresses)?;
+    let bytecode_version = flags.bytecode_version();
+    let (files, compiled_units) =
+        move_compiler::Compiler::from_files(source_files, dependencies, named_addr_map)
+            .set_interface_files_dir(interface_files_dir)
+            .set_flags(flags)
+            .build_and_report()?;
+    move_compiler::output_compiled_units(
+        bytecode_version,
+        emit_source_map,
+        files,
+        compiled_units,
+        &out_dir,
+    )
 }

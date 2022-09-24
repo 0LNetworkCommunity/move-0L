@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #[allow(unused_imports)]
@@ -6,15 +7,16 @@ use log::{debug, info, warn};
 
 use anyhow::bail;
 use heck::SnakeCase;
+use move_binary_format::file_format::Ability;
 use move_bytecode_verifier::script_signature;
 use move_command_line_common::files::MOVE_COMPILED_EXTENSION;
 use move_core_types::{
     abi::{ArgumentABI, ScriptABI, ScriptFunctionABI, TransactionScriptABI, TypeArgumentABI},
     identifier::IdentStr,
-    language_storage::TypeTag,
+    language_storage::{StructTag, TypeTag},
 };
 use move_model::{
-    model::{FunctionEnv, FunctionVisibility, GlobalEnv, ModuleEnv},
+    model::{FunctionEnv, GlobalEnv, ModuleEnv},
     ty,
 };
 use serde::{Deserialize, Serialize};
@@ -129,15 +131,38 @@ impl<'env> Abigen<'env> {
                     let func_name = module_env.symbol_pool().string(func.get_name());
                     let func_ident = IdentStr::new(&func_name).unwrap();
                     // only pick up script functions that also have a script-callable signature.
-                    func.visibility() == FunctionVisibility::Script
-                        && script_signature::verify_module_script_function(module, func_ident)
-                            .is_ok()
+                    // and check all arguments have a valid type tag
+                    func.is_entry()
+                        && script_signature::verify_module_function_signature_by_name(
+                            module,
+                            func_ident,
+                            script_signature::no_additional_script_signature_checks,
+                        )
+                        .is_ok()
+                        && func
+                            .get_parameters()
+                            .iter()
+                            .skip_while(|param| match &param.1 {
+                                ty::Type::Primitive(ty::PrimitiveType::Signer) => true,
+                                ty::Type::Reference(_, inner) => matches!(
+                                    &**inner,
+                                    ty::Type::Primitive(ty::PrimitiveType::Signer)
+                                ),
+                                _ => false,
+                            })
+                            .all(|param| {
+                                matches!(
+                                    self.get_type_tag(&param.1, module_env),
+                                    Err(_) | Ok(Some(_))
+                                )
+                            })
+                        && func.get_return_count() == 0
                 })
                 .collect()
         };
 
         let mut abis = Vec::new();
-        for func in script_iter.iter() {
+        for func in &script_iter {
             abis.push(self.generate_abi_for_function(func, module_env)?);
         }
 
@@ -162,9 +187,20 @@ impl<'env> Abigen<'env> {
         let args = func
             .get_parameters()
             .iter()
-            .filter(|param| !matches!(&param.1, ty::Type::Primitive(ty::PrimitiveType::Signer)))
+            .filter(|param| match &param.1 {
+                ty::Type::Primitive(ty::PrimitiveType::Signer) => false,
+                ty::Type::Reference(false, inner) => {
+                    !matches!(&**inner, ty::Type::Primitive(ty::PrimitiveType::Signer))
+                }
+                ty::Type::Struct(module_id, struct_id, _) => {
+                    let struct_module_env = module_env.env.get_module(*module_id);
+                    let abilities = struct_module_env.get_struct(*struct_id).get_abilities();
+                    abilities.has_ability(Ability::Copy) && !abilities.has_ability(Ability::Key)
+                }
+                _ => true,
+            })
             .map(|param| {
-                let tag = self.get_type_tag(&param.1)?;
+                let tag = self.get_type_tag(&param.1, module_env)?.unwrap();
                 Ok(ArgumentABI::new(
                     symbol_pool.string(param.0).to_string(),
                     tag,
@@ -220,7 +256,11 @@ impl<'env> Abigen<'env> {
         }
     }
 
-    fn get_type_tag(&self, ty0: &ty::Type) -> anyhow::Result<TypeTag> {
+    fn get_type_tag(
+        &self,
+        ty0: &ty::Type,
+        module_env: &ModuleEnv<'env>,
+    ) -> anyhow::Result<Option<TypeTag>> {
         use ty::Type::*;
         let tag = match ty0 {
             Primitive(prim) => {
@@ -238,19 +278,46 @@ impl<'env> Abigen<'env> {
                 }
             }
             Vector(ty) => {
-                let tag = self.get_type_tag(ty)?;
+                let tag = match self.get_type_tag(ty, module_env)? {
+                    Some(tag) => tag,
+                    None => return Ok(None),
+                };
                 TypeTag::Vector(Box::new(tag))
             }
+            Struct(module_id, struct_id, vec_type) => {
+                let expect_msg = format!("type {:?} is not allowed in scription function", ty0);
+                let struct_module_env = module_env.env.get_module(*module_id);
+                let abilities = struct_module_env.get_struct(*struct_id).get_abilities();
+                if abilities.has_ability(Ability::Copy) && !abilities.has_ability(Ability::Key) {
+                    TypeTag::Struct(StructTag {
+                        address: *struct_module_env.self_address(),
+                        module: struct_module_env.get_identifier(),
+                        name: struct_module_env
+                            .get_struct(*struct_id)
+                            .get_identifier()
+                            .unwrap_or_else(|| panic!("{}", expect_msg)),
+                        type_params: vec_type
+                            .iter()
+                            .map(|e| {
+                                self.get_type_tag(e, module_env)
+                                    .unwrap_or_else(|_| panic!("{}", expect_msg))
+                            })
+                            .map(|e| e.unwrap_or_else(|| panic!("{}", expect_msg)))
+                            .collect(),
+                    })
+                } else {
+                    return Ok(None);
+                }
+            }
             Tuple(_)
-            | Struct(_, _, _)
             | TypeParameter(_)
             | Fun(_, _)
             | TypeDomain(_)
             | ResourceDomain(..)
             | Error
             | Var(_)
-            | Reference(_, _) => bail!("Type {:?} is not allowed in scripts.", ty0),
+            | Reference(_, _) => return Ok(None),
         };
-        Ok(tag)
+        Ok(Some(tag))
     }
 }

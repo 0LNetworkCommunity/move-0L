@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -22,11 +23,30 @@ pub enum Location {
     Module(ModuleId),
 }
 
+/// A representation of the execution state (e.g., stack trace) at an
+/// error point.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ExecutionState {
+    stack_trace: Vec<(Option<ModuleId>, FunctionDefinitionIndex, CodeOffset)>,
+    // we may consider adding more state if necessary
+}
+
+impl ExecutionState {
+    pub fn new(stack_trace: Vec<(Option<ModuleId>, FunctionDefinitionIndex, CodeOffset)>) -> Self {
+        Self { stack_trace }
+    }
+
+    pub fn stack_trace(&self) -> &Vec<(Option<ModuleId>, FunctionDefinitionIndex, CodeOffset)> {
+        &self.stack_trace
+    }
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct VMError {
     major_status: StatusCode,
     sub_status: Option<u64>,
     message: Option<String>,
+    exec_state: Option<ExecutionState>,
     location: Location,
     indices: Vec<(IndexKind, TableIndex)>,
     offsets: Vec<(FunctionDefinitionIndex, CodeOffset)>,
@@ -62,10 +82,17 @@ impl VMError {
                 VMStatus::Error(StatusCode::ABORTED)
             }
 
-            // TODO Errors for OUT_OF_GAS do not always have index set
             (major_status, sub_status, location)
                 if major_status.status_type() == StatusType::Execution =>
             {
+                let abort_location = match &location {
+                    Location::Script => vm_status::AbortLocation::Script,
+                    Location::Module(id) => vm_status::AbortLocation::Module(id.clone()),
+                    Location::Undefined => {
+                        return VMStatus::Error(major_status);
+                    }
+                };
+                // Errors for OUT_OF_GAS do not always have index set: if it does not, it should already return above.
                 debug_assert!(
                     offsets.len() == 1,
                     "Unexpected offsets. major_status: {:?}\
@@ -77,13 +104,6 @@ impl VMError {
                     location,
                     offsets
                 );
-                let abort_location = match location {
-                    Location::Script => vm_status::AbortLocation::Script,
-                    Location::Module(id) => vm_status::AbortLocation::Module(id),
-                    Location::Undefined => {
-                        return VMStatus::Error(major_status);
-                    }
-                };
                 let (function, code_offset) = match offsets.pop() {
                     None => {
                         return VMStatus::Error(major_status);
@@ -114,6 +134,14 @@ impl VMError {
         self.message.as_ref()
     }
 
+    pub fn exec_state(&self) -> Option<&ExecutionState> {
+        self.exec_state.as_ref()
+    }
+
+    pub fn remove_exec_state(&mut self) {
+        self.exec_state = None;
+    }
+
     pub fn location(&self) -> &Location {
         &self.location
     }
@@ -136,6 +164,7 @@ impl VMError {
         StatusCode,
         Option<u64>,
         Option<String>,
+        Option<ExecutionState>,
         Location,
         Vec<(IndexKind, TableIndex)>,
         Vec<(FunctionDefinitionIndex, CodeOffset)>,
@@ -144,6 +173,7 @@ impl VMError {
             major_status,
             sub_status,
             message,
+            exec_state,
             location,
             indices,
             offsets,
@@ -152,18 +182,42 @@ impl VMError {
             major_status,
             sub_status,
             message,
+            exec_state,
             location,
             indices,
             offsets,
         )
     }
+
+    pub fn to_partial(self) -> PartialVMError {
+        let VMError {
+            major_status,
+            sub_status,
+            message,
+            exec_state,
+            indices,
+            offsets,
+            ..
+        } = self;
+        PartialVMError {
+            major_status,
+            sub_status,
+            message,
+            exec_state,
+            indices,
+            offsets,
+        }
+    }
 }
+
+impl std::error::Error for VMError {}
 
 #[derive(Debug, Clone)]
 pub struct PartialVMError {
     major_status: StatusCode,
     sub_status: Option<u64>,
     message: Option<String>,
+    exec_state: Option<ExecutionState>,
     indices: Vec<(IndexKind, TableIndex)>,
     offsets: Vec<(FunctionDefinitionIndex, CodeOffset)>,
 }
@@ -175,6 +229,7 @@ impl PartialVMError {
         StatusCode,
         Option<u64>,
         Option<String>,
+        Option<ExecutionState>,
         Vec<(IndexKind, TableIndex)>,
         Vec<(FunctionDefinitionIndex, CodeOffset)>,
     ) {
@@ -182,10 +237,18 @@ impl PartialVMError {
             major_status,
             sub_status,
             message,
+            exec_state,
             indices,
             offsets,
         } = self;
-        (major_status, sub_status, message, indices, offsets)
+        (
+            major_status,
+            sub_status,
+            message,
+            exec_state,
+            indices,
+            offsets,
+        )
     }
 
     pub fn finish(self, location: Location) -> VMError {
@@ -193,6 +256,7 @@ impl PartialVMError {
             major_status,
             sub_status,
             message,
+            exec_state,
             indices,
             offsets,
         } = self;
@@ -200,6 +264,7 @@ impl PartialVMError {
             major_status,
             sub_status,
             message,
+            exec_state,
             location,
             indices,
             offsets,
@@ -211,6 +276,7 @@ impl PartialVMError {
             major_status,
             sub_status: None,
             message: None,
+            exec_state: None,
             indices: vec![],
             offsets: vec![],
         }
@@ -232,6 +298,14 @@ impl PartialVMError {
         debug_assert!(self.message.is_none());
         Self {
             message: Some(message),
+            ..self
+        }
+    }
+
+    pub fn with_exec_state(self, exec_state: ExecutionState) -> Self {
+        debug_assert!(self.exec_state.is_none());
+        Self {
+            exec_state: Some(exec_state),
             ..self
         }
     }

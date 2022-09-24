@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -48,18 +49,15 @@ impl<'env> Context<'env> {
         pre_compiled_lib: Option<&FullyCompiledProgram>,
         modules: &UniqueMap<ModuleIdent, H::ModuleDefinition>,
     ) -> Self {
-        let all_modules = modules.key_cloned_iter().chain(
-            pre_compiled_lib
-                .iter()
-                .map(|pre_compiled| {
-                    pre_compiled
-                        .hlir
-                        .modules
-                        .key_cloned_iter()
-                        .filter(|(mident, _m)| !modules.contains_key(mident))
-                })
-                .flatten(),
-        );
+        let all_modules = modules
+            .key_cloned_iter()
+            .chain(pre_compiled_lib.iter().flat_map(|pre_compiled| {
+                pre_compiled
+                    .hlir
+                    .modules
+                    .key_cloned_iter()
+                    .filter(|(mident, _m)| !modules.contains_key(mident))
+            }));
         let struct_declared_abilities = UniqueMap::maybe_from_iter(
             all_modules
                 .map(|(m, mdef)| (m, mdef.structs.ref_map(|_s, sdef| sdef.abilities.clone()))),
@@ -185,6 +183,7 @@ fn module(
     mdef: H::ModuleDefinition,
 ) -> (ModuleIdent, G::ModuleDefinition) {
     let H::ModuleDefinition {
+        package_name,
         attributes,
         is_source_module,
         dependency_order,
@@ -199,6 +198,7 @@ fn module(
     (
         module_ident,
         G::ModuleDefinition {
+            package_name,
             attributes,
             is_source_module,
             dependency_order,
@@ -222,6 +222,7 @@ fn scripts(
 
 fn script(context: &mut Context, hscript: H::Script) -> G::Script {
     let H::Script {
+        package_name,
         attributes,
         loc,
         constants: hconstants,
@@ -231,6 +232,7 @@ fn script(context: &mut Context, hscript: H::Script) -> G::Script {
     let constants = hconstants.map(|name, c| constant(context, name, c));
     let function = function(context, function_name, hfunction);
     G::Script {
+        package_name,
         attributes,
         loc,
         constants,
@@ -378,14 +380,19 @@ pub(crate) fn move_value_from_value_(v_: Value_) -> MoveValue {
 //**************************************************************************************************
 
 fn function(context: &mut Context, _name: FunctionName, f: H::Function) -> G::Function {
-    let attributes = f.attributes;
-    let visibility = f.visibility;
-    let signature = f.signature;
-    let acquires = f.acquires;
-    let body = function_body(context, &signature, &acquires, f.body);
+    let H::Function {
+        attributes,
+        visibility,
+        entry,
+        signature,
+        acquires,
+        body,
+    } = f;
+    let body = function_body(context, &signature, &acquires, body);
     G::Function {
         attributes,
         visibility,
+        entry,
         signature,
         acquires,
         body,

@@ -1,20 +1,22 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
+    package_hooks,
     resolution::digest::compute_digest,
     source_package::{
         layout::SourcePackageLayout,
         manifest_parser::{parse_move_manifest_string, parse_source_manifest},
         parsed_manifest::{
-            Dependency, FileName, NamedAddress, PackageDigest, PackageName, SourceManifest,
-            SubstOrRename,
+            Dependencies, Dependency, FileName, NamedAddress, PackageDigest, PackageName,
+            SourceManifest, SubstOrRename,
         },
     },
     BuildConfig,
 };
 use anyhow::{bail, Context, Result};
-use move_command_line_common::files::find_move_filenames;
+use move_command_line_common::files::{find_move_filenames, FileHash};
 use move_core_types::account_address::AccountAddress;
 use move_symbol_pool::Symbol;
 use petgraph::{algo, graphmap::DiGraphMap, Outgoing};
@@ -22,6 +24,7 @@ use ptree::{print_tree, TreeBuilder};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    fs,
     path::{Path, PathBuf},
     process::Command,
     rc::Rc,
@@ -90,8 +93,13 @@ impl ResolvingGraph {
     pub fn new(
         root_package: SourceManifest,
         root_package_path: PathBuf,
-        build_options: BuildConfig,
+        mut build_options: BuildConfig,
     ) -> Result<ResolvingGraph> {
+        if build_options.architecture.is_none() {
+            if let Some(info) = &root_package.build {
+                build_options.architecture = info.architecture;
+            }
+        }
         let mut resolution_graph = Self {
             root_package_path: root_package_path.clone(),
             build_options,
@@ -163,8 +171,12 @@ impl ResolvingGraph {
 
         if !unresolved_addresses.is_empty() {
             bail!(
-                "Unresolved addresses found: [\n{}\n]",
-                unresolved_addresses.join("\n")
+                "Unresolved addresses found: [\n{}\n]\n\
+                To fix this, add an entry for each unresolved address to the [addresses] section of {}/Move.toml: \
+                e.g.,\n[addresses]\nStd = \"0x1\"\n\
+                Alternatively, you can also define [dev-addresses] and call with the -d flag",
+                unresolved_addresses.join("\n"),
+                root_package_path.to_string_lossy()
             )
         }
 
@@ -289,12 +301,7 @@ impl ResolvingGraph {
         is_root_package: bool,
     ) -> Result<()> {
         let package_name = &package.package.name;
-        for (name, addr_opt) in package
-            .addresses
-            .clone()
-            .unwrap_or_else(BTreeMap::new)
-            .into_iter()
-        {
+        for (name, addr_opt) in package.addresses.clone().unwrap_or_default().into_iter() {
             match resolution_table.get(&name) {
                 Some(other) => {
                     other.unify(addr_opt).with_context(|| {
@@ -312,10 +319,21 @@ impl ResolvingGraph {
         }
 
         if self.build_options.dev_mode && is_root_package {
+            let mut addr_to_name_mapping = BTreeMap::new();
+            for (name, addr) in resolution_table
+                .iter()
+                .filter(|(_name, addr)| addr.value.borrow().is_some())
+            {
+                let names = addr_to_name_mapping
+                    .entry(addr.value.borrow().unwrap())
+                    .or_insert_with(Vec::new);
+                names.push(*name);
+            }
+
             for (name, addr) in package
                 .dev_address_assignments
                 .clone()
-                .unwrap_or_else(BTreeMap::new)
+                .unwrap_or_default()
                 .into_iter()
             {
                 match resolution_table.get(&name) {
@@ -338,6 +356,24 @@ impl ResolvingGraph {
                         );
                     }
                 }
+
+                if let Some(conflicts) = addr_to_name_mapping.insert(addr, vec![name]) {
+                    bail!(
+                        "Found non-unique dev address assignment '{name} = 0x{addr}' in root \
+                        package '{pkg}'. Dev address assignments must not conflict with any other \
+                        assignments in order to ensure that the package will compile with any \
+                        possible address assignment. \
+                        Assignment conflicts with previous assignments: {conflicts} = 0x{addr}",
+                        name = name,
+                        addr = addr.short_str_lossless(),
+                        pkg = package_name,
+                        conflicts = conflicts
+                            .into_iter()
+                            .map(|n| n.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )
+                }
             }
         }
         Ok(())
@@ -352,7 +388,7 @@ impl ResolvingGraph {
         dep: Dependency,
         root_path: PathBuf,
     ) -> Result<(Renaming, ResolvingTable)> {
-        Self::download_and_update_if_repo(dep_name_in_pkg, &dep)?;
+        Self::download_and_update_if_remote(dep_name_in_pkg, &dep)?;
         let (dep_package, dep_package_dir) =
             Self::parse_package_manifest(&dep, &dep_name_in_pkg, root_path)
                 .with_context(|| format!("While processing dependency '{}'", dep_name_in_pkg))?;
@@ -461,7 +497,7 @@ impl ResolvingGraph {
         mut root_path: PathBuf,
     ) -> Result<(SourceManifest, PathBuf)> {
         root_path.push(&dep.local);
-        match std::fs::read_to_string(&root_path.join(SourcePackageLayout::Manifest.path())) {
+        match fs::read_to_string(&root_path.join(SourcePackageLayout::Manifest.path())) {
             Ok(contents) => {
                 let source_package: SourceManifest =
                     parse_move_manifest_string(contents).and_then(parse_source_manifest)?;
@@ -475,7 +511,33 @@ impl ResolvingGraph {
         }
     }
 
-    fn download_and_update_if_repo(dep_name: PackageName, dep: &Dependency) -> Result<()> {
+    pub fn download_dependency_repos(
+        manifest: &SourceManifest,
+        build_options: &BuildConfig,
+        root_path: &Path,
+    ) -> Result<()> {
+        // include dev dependencies if in dev mode
+        let empty_deps;
+        let additional_deps = if build_options.dev_mode {
+            &manifest.dev_dependencies
+        } else {
+            empty_deps = Dependencies::new();
+            &empty_deps
+        };
+
+        for (dep_name, dep) in manifest.dependencies.iter().chain(additional_deps.iter()) {
+            Self::download_and_update_if_remote(*dep_name, dep)?;
+
+            let (dep_manifest, _) =
+                Self::parse_package_manifest(dep, dep_name, root_path.to_path_buf())
+                    .with_context(|| format!("While processing dependency '{}'", *dep_name))?;
+            // download dependencies of dependencies
+            Self::download_dependency_repos(&dep_manifest, build_options, root_path)?;
+        }
+        Ok(())
+    }
+
+    fn download_and_update_if_remote(dep_name: PackageName, dep: &Dependency) -> Result<()> {
         if let Some(git_info) = &dep.git_info {
             if !git_info.download_to.exists() {
                 Command::new("git")
@@ -504,6 +566,9 @@ impl ResolvingGraph {
                         )
                     })?;
             }
+        }
+        if let Some(node_info) = &dep.node_info {
+            package_hooks::resolve_custom_dependency(dep_name, node_info)?
         }
         Ok(())
     }
@@ -656,6 +721,38 @@ impl ResolvedGraph {
         print_tree(&tree)?;
         Ok(())
     }
+
+    pub fn extract_named_address_mapping(
+        &self,
+    ) -> impl Iterator<Item = (Symbol, AccountAddress)> + '_ {
+        let rooot_package_name = &self.root_package.package.name;
+        let root_package = self
+            .package_table
+            .get(rooot_package_name)
+            .expect("Failed to find root package in package table -- this should never happen");
+
+        root_package
+            .resolution_table
+            .iter()
+            .map(|(name, addr)| (*name, *addr))
+    }
+
+    pub fn file_sources(&self) -> BTreeMap<FileHash, (Symbol, String)> {
+        self.package_table
+            .iter()
+            .flat_map(|(_, rpkg)| {
+                rpkg.get_sources(&self.build_options)
+                    .unwrap()
+                    .iter()
+                    .map(|fname| {
+                        let contents = fs::read_to_string(Path::new(fname.as_str())).unwrap();
+                        let fhash = FileHash::new(&contents);
+                        (fhash, (*fname, contents))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .collect()
+    }
 }
 
 impl ResolvedPackage {
@@ -670,33 +767,25 @@ impl ResolvedPackage {
             .map(Symbol::from)
             .collect())
     }
+
     /// Returns the transitive dependencies of this package in dependency order
-    pub fn transitive_dependencies(&self, resolved_graph: &ResolvedGraph) -> Vec<PackageName> {
+    pub fn transitive_dependencies(&self, resolved_graph: &ResolvedGraph) -> BTreeSet<PackageName> {
         let mut seen = BTreeSet::new();
-        let resolve_package = |(package_name, _): (&PackageName, _)| {
+        let resolve_package = |package_name: PackageName| {
             let mut package_deps = resolved_graph
                 .package_table
-                .get(package_name)
+                .get(&package_name)
                 .unwrap()
                 .transitive_dependencies(resolved_graph);
-            package_deps.push(*package_name);
+            package_deps.insert(package_name);
             package_deps
         };
 
-        let transitive_deps: Vec<_> = if resolved_graph.build_options.dev_mode {
-            self.source_package
-                .dependencies
-                .iter()
-                .chain(self.source_package.dev_dependencies.iter())
-                .flat_map(resolve_package)
-                .collect()
-        } else {
-            self.source_package
-                .dependencies
-                .iter()
-                .flat_map(resolve_package)
-                .collect()
-        };
+        let immediate_deps = self.immediate_dependencies(resolved_graph);
+        let transitive_deps: Vec<_> = immediate_deps
+            .into_iter()
+            .flat_map(resolve_package)
+            .collect();
 
         transitive_deps
             .into_iter()
@@ -709,5 +798,18 @@ impl ResolvedPackage {
                 }
             })
             .collect()
+    }
+
+    pub fn immediate_dependencies(&self, resolved_graph: &ResolvedGraph) -> BTreeSet<PackageName> {
+        if resolved_graph.build_options.dev_mode {
+            self.source_package
+                .dependencies
+                .keys()
+                .chain(self.source_package.dev_dependencies.keys())
+                .copied()
+                .collect()
+        } else {
+            self.source_package.dependencies.keys().copied().collect()
+        }
     }
 }

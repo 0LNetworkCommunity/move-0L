@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -68,7 +69,6 @@ impl<'a> Context<'a> {
         >,
     ) -> (Vec<IR::ImportDefinition>, Vec<IR::ModuleDependency>) {
         let Context {
-            env,
             current_module: _current_module,
             mut seen_structs,
             seen_functions,
@@ -87,7 +87,7 @@ impl<'a> Context<'a> {
         for (module, (structs, functions)) in module_dependencies {
             let dependency_order = dependency_orderings[&module];
             let ir_name = Self::ir_module_alias(&module);
-            let ir_ident = Self::translate_module_ident_impl(env.named_address_mapping(), module);
+            let ir_ident = Self::translate_module_ident(module);
             imports.push(IR::ImportDefinition::new(ir_ident, Some(ir_name)));
             ordered_dependencies.push((
                 dependency_order,
@@ -208,25 +208,20 @@ impl<'a> Context<'a> {
 
     fn ir_module_alias(sp!(_, ModuleIdent_ { address, module }): &ModuleIdent) -> IR::ModuleName {
         let s = match address {
-            Address::Anonymous(sp!(_, a_)) => format!("{:X}::{}", a_, module),
-            Address::Named(n) => format!("{}::{}", n, module),
+            Address::Numerical(_, sp!(_, a_)) => format!("{:X}::{}", a_, module),
+            Address::NamedUnassigned(name) => format!("{}::{}", name, module),
         };
         IR::ModuleName(s.into())
     }
 
     pub fn resolve_address(&self, addr: Address) -> NumericalAddress {
-        addr.into_addr_bytes(self.env.named_address_mapping())
+        addr.into_addr_bytes()
     }
 
-    pub fn translate_module_ident(&self, ident: ModuleIdent) -> IR::ModuleIdent {
-        Self::translate_module_ident_impl(self.env.named_address_mapping(), ident)
-    }
-
-    fn translate_module_ident_impl(
-        addresses: &BTreeMap<Symbol, NumericalAddress>,
+    pub fn translate_module_ident(
         sp!(_, ModuleIdent_ { address, module }): ModuleIdent,
     ) -> IR::ModuleIdent {
-        let address_bytes = address.into_addr_bytes(addresses);
+        let address_bytes = address.into_addr_bytes();
         let name = Self::translate_module_name_(module.0.value);
         IR::ModuleIdent::new(name, MoveAddress::new(address_bytes.into_bytes()))
     }

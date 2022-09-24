@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -6,16 +7,23 @@ use crate::{
     context::XContext,
     Result,
 };
+use clap::Parser;
 use std::ffi::OsString;
-use structopt::StructOpt;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct Args {
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub(crate) package_args: SelectedPackageArgs,
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub(crate) build_args: BuildArgs,
-    #[structopt(name = "ARGS", parse(from_os_str), last = true)]
+    #[clap(
+        name = "ARGS",
+        parse(from_os_str),
+        last = true,
+        takes_value(true),
+        multiple_values(true),
+        multiple_occurrences(true)
+    )]
     args: Vec<OsString>,
 }
 

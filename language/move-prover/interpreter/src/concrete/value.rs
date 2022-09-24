@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! This file implements several value representations to track values produced and consumed during
@@ -12,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use move_core_types::{
     account_address::AccountAddress,
-    effects::ChangeSet,
+    effects::{ChangeSet, Op},
     value::{MoveStruct, MoveValue},
 };
 use move_model::ast::{MemoryLabel, TempIndex};
@@ -134,6 +135,7 @@ pub enum Pointer {
     None,
     Global(AccountAddress),
     Local(TempIndex),
+    RefDirect(TempIndex),
     RefField(TempIndex, usize),
     RefElement(TempIndex, usize),
     ArgRef(TempIndex, Box<Pointer>),
@@ -492,6 +494,18 @@ impl TypedValue {
         }
     }
 
+    /// Create a reference that is a direct borrow of another reference value
+    pub fn borrow_direct(self, ty: Type, local_idx: TempIndex) -> TypedValue {
+        if cfg!(debug_assertions) {
+            assert!(ty.is_compatible_for_assign(&self.ty));
+        }
+        TypedValue {
+            ty,
+            val: self.val,
+            ptr: Pointer::RefDirect(local_idx),
+        }
+    }
+
     /// Create a reference to the base value
     pub fn borrow_local(self, is_mut: bool, local_idx: TempIndex) -> TypedValue {
         TypedValue {
@@ -571,6 +585,9 @@ impl TypedValue {
         ) {
             match cur {
                 Pointer::ArgRef(_, _) => trace.push(cur.clone()),
+                Pointer::RefDirect(idx) => {
+                    follow_return_pointers_recursive(ptrs.get(idx).unwrap(), ptrs, trace);
+                }
                 Pointer::RefField(idx, _) | Pointer::RefElement(idx, _) => {
                     trace.push(cur.clone());
                     follow_return_pointers_recursive(ptrs.get(idx).unwrap(), ptrs, trace);
@@ -619,6 +636,21 @@ impl TypedValue {
             ty,
             val,
             ptr: unboxed_ptr,
+        }
+    }
+
+    /// update the reference directly
+    pub fn update_ref_direct(self, ref_val: TypedValue) -> TypedValue {
+        let (old_ty, _, old_ptr) = self.decompose();
+        let (new_ty, new_val, _) = ref_val.decompose();
+        if cfg!(debug_assertions) {
+            assert!(old_ty.is_ref(Some(true)));
+            assert_eq!(old_ty, new_ty);
+        }
+        TypedValue {
+            ty: old_ty,
+            val: new_val,
+            ptr: old_ptr,
         }
     }
 
@@ -1007,11 +1039,12 @@ impl AccountState {
 pub struct GlobalState {
     accounts: BTreeMap<AccountAddress, AccountState>,
     events: BTreeMap<Vec<u8>, BTreeMap<u64, TypedValue>>,
+    touched_addresses: BTreeSet<AccountAddress>,
 }
 
 impl GlobalState {
-    /// Get a reference to a resource from the address, return None of the resource does not exist
-    pub fn get_resource(
+    /// Get a reference to a resource from the address, return None if the resource does not exist
+    pub fn get_resource_for_spec(
         &self,
         is_mut_opt: Option<bool>,
         addr: AccountAddress,
@@ -1032,12 +1065,25 @@ impl GlobalState {
         })
     }
 
+    /// Get a reference to a resource from the address, return None if the resource does not exist
+    /// otherwise, update the set of addresses touched by the bytecode
+    pub fn get_resource_for_code(
+        &mut self,
+        is_mut_opt: Option<bool>,
+        addr: AccountAddress,
+        key: StructInstantiation,
+    ) -> Option<TypedValue> {
+        self.touched_addresses.insert(addr);
+        self.get_resource_for_spec(is_mut_opt, addr, key)
+    }
+
     /// Remove a resource from the address, return the old resource (as struct) if exists
     pub fn del_resource(
         &mut self,
         addr: AccountAddress,
         key: StructInstantiation,
     ) -> Option<TypedValue> {
+        self.touched_addresses.insert(addr);
         self.accounts.get_mut(&addr).and_then(|account| {
             account.del_resource(&key).map(|val| TypedValue {
                 ty: Type::mk_struct(key),
@@ -1057,6 +1103,7 @@ impl GlobalState {
         if cfg!(debug_assertions) {
             assert_eq!(key, object.ty.into_struct_inst());
         }
+        self.touched_addresses.insert(addr);
         self.accounts
             .entry(addr)
             .or_insert_with(AccountState::default)
@@ -1087,6 +1134,16 @@ impl GlobalState {
         }
     }
 
+    /// Output all the addresses that are touched by the bytecode so far
+    pub fn get_touched_addresses(&self) -> &BTreeSet<AccountAddress> {
+        &self.touched_addresses
+    }
+
+    /// Put new addresses to all the addresses that are touched by the bytecode
+    pub fn put_touched_addresses(&mut self, addresses: &[AccountAddress]) {
+        self.touched_addresses.extend(addresses);
+    }
+
     /// Calculate the delta (i.e., a ChangeSet) against the old state
     pub fn delta(&self, old_state: &GlobalState) -> ChangeSet {
         fn bcs_serialize_resource(key: &StructInstantiation, val: &BaseValue) -> Vec<u8> {
@@ -1107,19 +1164,21 @@ impl GlobalState {
             for (key, val) in &account_state.storage {
                 match old_account_state.storage.get(key) {
                     None => change_set
-                        .publish_resource(
+                        .add_resource_op(
                             *addr,
                             key.to_move_struct_tag(),
-                            bcs_serialize_resource(key, val),
+                            Op::New(bcs_serialize_resource(key, val)),
                         )
                         .unwrap(),
                     Some(old_val) => {
                         if val != old_val {
-                            change_set.publish_or_overwrite_resource(
-                                *addr,
-                                key.to_move_struct_tag(),
-                                bcs_serialize_resource(key, val),
-                            );
+                            change_set
+                                .add_resource_op(
+                                    *addr,
+                                    key.to_move_struct_tag(),
+                                    Op::Modify(bcs_serialize_resource(key, val)),
+                                )
+                                .unwrap();
                         }
                     }
                 }
@@ -1132,7 +1191,7 @@ impl GlobalState {
             for old_key in old_account_state.storage.keys() {
                 if !account_state.storage.contains_key(old_key) {
                     change_set
-                        .unpublish_resource(*old_addr, old_key.to_move_struct_tag())
+                        .add_resource_op(*old_addr, old_key.to_move_struct_tag(), Op::Delete)
                         .unwrap();
                 }
             }
@@ -1217,8 +1276,7 @@ impl EvalState {
     pub fn all_addresses(&self) -> BTreeSet<AccountAddress> {
         self.saved_memory
             .values()
-            .map(|v1| v1.values().map(|v2| v2.values().map(|v3| v3.keys())))
-            .flatten()
+            .flat_map(|v1| v1.values().map(|v2| v2.values().map(|v3| v3.keys())))
             .flatten()
             .flatten()
             .copied()

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -11,12 +12,13 @@ use move_binary_format::{
     file_format::{Ability, AbilitySet},
     CompiledModule,
 };
+use move_bytecode_utils::layout::TypeLayoutBuilder;
 use move_core_types::{
     account_address::AccountAddress,
     identifier::{IdentStr, Identifier},
     language_storage::{ModuleId, StructTag, TypeTag},
     resolver::MoveResolver,
-    value::{MoveStruct, MoveValue},
+    value::{MoveStruct, MoveTypeLayout, MoveValue},
     vm_status::VMStatus,
 };
 use serde::ser::{SerializeMap, SerializeSeq};
@@ -85,7 +87,19 @@ impl<'a, T: MoveResolver + ?Sized> MoveValueAnnotator<'a, T> {
     }
 
     pub fn get_module(&self, module: &ModuleId) -> Result<Rc<CompiledModule>> {
-        self.cache.get_module_by_id(module)
+        self.cache.get_module_by_id_or_err(module)
+    }
+
+    pub fn get_type_layout_runtime(&self, type_tag: &TypeTag) -> Result<MoveTypeLayout> {
+        TypeLayoutBuilder::build_runtime(type_tag, &self.cache)
+    }
+
+    pub fn get_type_layout_with_fields(&self, type_tag: &TypeTag) -> Result<MoveTypeLayout> {
+        TypeLayoutBuilder::build_with_fields(type_tag, &self.cache)
+    }
+
+    pub fn get_type_layout_with_types(&self, type_tag: &TypeTag) -> Result<MoveTypeLayout> {
+        TypeLayoutBuilder::build_with_types(type_tag, &self.cache)
     }
 
     pub fn view_function_arguments(
@@ -98,7 +112,11 @@ impl<'a, T: MoveResolver + ?Sized> MoveValueAnnotator<'a, T> {
             .cache
             .resolve_function_arguments(module, function)?
             .into_iter()
-            .filter(|t| !matches!(t, FatType::Signer))
+            .filter(|t| match t {
+                FatType::Signer => false,
+                FatType::Reference(inner) => !matches!(&**inner, FatType::Signer),
+                _ => true,
+            })
             .collect();
         anyhow::ensure!(
             types.len() == args.len(),
@@ -134,7 +152,7 @@ impl<'a, T: MoveResolver + ?Sized> MoveValueAnnotator<'a, T> {
                 .into_iter()
                 .zip(runtime.into_iter())
                 .collect(),
-            MoveStruct::WithFields(fields) => fields,
+            MoveStruct::WithFields(fields) | MoveStruct::WithTypes { fields, .. } => fields,
         })
     }
 

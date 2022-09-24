@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use codespan_reporting::diagnostic::Severity;
@@ -81,6 +82,8 @@ pub struct ProverOptions {
     pub unconditional_abort_as_inconsistency: bool,
     /// Whether to run the transformation passes for concrete interpretation (instead of proving)
     pub for_interpretation: bool,
+    /// Whether to skip loop analysis.
+    pub skip_loop_analysis: bool,
 }
 
 // add custom struct for mutation options
@@ -112,6 +115,7 @@ impl Default for ProverOptions {
             check_inconsistency: false,
             unconditional_abort_as_inconsistency: false,
             for_interpretation: false,
+            skip_loop_analysis: false,
         }
     }
 }

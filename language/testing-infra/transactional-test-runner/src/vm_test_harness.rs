@@ -1,41 +1,43 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{collections::BTreeMap, path::Path};
 
 use crate::{
     framework::{run_test_impl, CompiledState, MoveTestAdapter},
-    tasks::{EmptyCommand, InitCommand, RawAddress, SyntaxChoice, TaskInput},
+    tasks::{EmptyCommand, InitCommand, SyntaxChoice, TaskInput},
 };
 use anyhow::{anyhow, Result};
 use move_binary_format::{
-    access::ModuleAccess,
     errors::{Location, VMError, VMResult},
     file_format::CompiledScript,
     CompiledModule,
 };
+use move_command_line_common::{
+    address::ParsedAddress, files::verify_and_create_named_address_mapping,
+};
 use move_compiler::{
-    compiled_unit::AnnotatedCompiledUnit,
-    shared::{verify_and_create_named_address_mapping, NumericalAddress},
-    FullyCompiledProgram,
+    compiled_unit::AnnotatedCompiledUnit, shared::PackagePaths, FullyCompiledProgram,
 };
 use move_core_types::{
     account_address::AccountAddress,
     identifier::{IdentStr, Identifier},
     language_storage::{ModuleId, StructTag, TypeTag},
     resolver::MoveResolver,
-    transaction_argument::{convert_txn_args, TransactionArgument},
+    value::MoveValue,
 };
 use move_resource_viewer::MoveValueAnnotator;
 use move_stdlib::move_stdlib_named_addresses;
 use move_symbol_pool::Symbol;
-use move_vm_runtime::{move_vm::MoveVM, session::Session};
-use move_vm_test_utils::InMemoryStorage;
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_runtime::{
+    move_vm::MoveVM,
+    session::{SerializedReturnValues, Session},
+};
+use move_vm_test_utils::{gas_schedule::GasStatus, InMemoryStorage};
 use once_cell::sync::Lazy;
 
-const STD_ADDR: AccountAddress =
-    AccountAddress::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+const STD_ADDR: AccountAddress = AccountAddress::ONE;
 
 struct SimpleVMTestAdapter<'a> {
     compiled_state: CompiledState<'a>,
@@ -68,6 +70,7 @@ pub fn view_resource_in_move_storage(
 impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
     type ExtraInitArgs = EmptyCommand;
     type ExtraPublishArgs = EmptyCommand;
+    type ExtraValueArgs = ();
     type ExtraRunArgs = EmptyCommand;
     type Subcommand = EmptyCommand;
 
@@ -83,7 +86,7 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
         default_syntax: SyntaxChoice,
         pre_compiled_deps: Option<&'a FullyCompiledProgram>,
         task_opt: Option<TaskInput<(InitCommand, EmptyCommand)>>,
-    ) -> Self {
+    ) -> (Self, Option<String>) {
         let additional_mapping = match task_opt.map(|t| t.command) {
             Some((InitCommand { named_addresses }, _)) => {
                 verify_and_create_named_address_mapping(named_addresses).unwrap()
@@ -102,7 +105,7 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
             named_address_mapping.insert(name, addr);
         }
         let mut adapter = Self {
-            compiled_state: CompiledState::new(named_address_mapping, pre_compiled_deps),
+            compiled_state: CompiledState::new(named_address_mapping, pre_compiled_deps, None),
             default_syntax,
             storage: InMemoryStorage::new(),
         };
@@ -127,15 +130,16 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
             let prev = addr_to_name_mapping.insert(addr, Symbol::from(name));
             assert!(prev.is_none());
         }
-        for module in &*MOVE_STDLIB_COMPILED {
-            let bytes = NumericalAddress::new(
-                module.address().into_bytes(),
-                move_compiler::shared::NumberFormat::Hex,
-            );
-            let named_addr = *addr_to_name_mapping.get(&bytes).unwrap();
-            adapter.compiled_state.add(Some(named_addr), module.clone());
+        for module in MOVE_STDLIB_COMPILED
+            .iter()
+            .filter(|module| !adapter.compiled_state.is_precompiled_dep(&module.self_id()))
+            .collect::<Vec<_>>()
+        {
+            adapter
+                .compiled_state
+                .add_and_generate_interface_file(module.clone());
         }
-        adapter
+        (adapter, None)
     }
 
     fn publish_module(
@@ -144,33 +148,33 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
         _named_addr_opt: Option<Identifier>,
         gas_budget: Option<u64>,
         _extra_args: Self::ExtraPublishArgs,
-    ) -> Result<()> {
+    ) -> Result<(Option<String>, CompiledModule)> {
         let mut module_bytes = vec![];
         module.serialize(&mut module_bytes)?;
 
         let id = module.self_id();
         let sender = *id.address();
-        self.perform_session_action(gas_budget, |session, gas_status| {
+        match self.perform_session_action(gas_budget, |session, gas_status| {
             session.publish_module(module_bytes, sender, gas_status)
-        })
-        .map_err(|e| {
-            anyhow!(
+        }) {
+            Ok(()) => Ok((None, module)),
+            Err(e) => Err(anyhow!(
                 "Unable to publish module '{}'. Got VMError: {}",
                 module.self_id(),
                 format_vm_error(&e)
-            )
-        })
+            )),
+        }
     }
 
     fn execute_script(
         &mut self,
         script: CompiledScript,
         type_args: Vec<TypeTag>,
-        signers: Vec<RawAddress>,
-        txn_args: Vec<TransactionArgument>,
+        signers: Vec<ParsedAddress>,
+        txn_args: Vec<MoveValue>,
         gas_budget: Option<u64>,
         _extra_args: Self::ExtraRunArgs,
-    ) -> Result<Option<String>> {
+    ) -> Result<(Option<String>, SerializedReturnValues)> {
         let signers: Vec<_> = signers
             .into_iter()
             .map(|addr| self.compiled_state().resolve_address(&addr))
@@ -178,17 +182,28 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
 
         let mut script_bytes = vec![];
         script.serialize(&mut script_bytes)?;
-        let args = convert_txn_args(&txn_args);
-        self.perform_session_action(gas_budget, |session, gas_status| {
-            session.execute_script(script_bytes, type_args, args, signers, gas_status)
-        })
-        .map_err(|e| {
-            anyhow!(
-                "Script execution failed with VMError: {}",
-                format_vm_error(&e)
-            )
-        })?;
-        Ok(None)
+
+        let args = txn_args
+            .iter()
+            .map(|arg| arg.simple_serialize().unwrap())
+            .collect::<Vec<_>>();
+        // TODO rethink testing signer args
+        let args = signers
+            .iter()
+            .map(|a| MoveValue::Signer(*a).simple_serialize().unwrap())
+            .chain(args)
+            .collect();
+        let serialized_return_values = self
+            .perform_session_action(gas_budget, |session, gas_status| {
+                session.execute_script(script_bytes, type_args, args, gas_status)
+            })
+            .map_err(|e| {
+                anyhow!(
+                    "Script execution failed with VMError: {}",
+                    format_vm_error(&e)
+                )
+            })?;
+        Ok((None, serialized_return_values))
     }
 
     fn call_function(
@@ -196,27 +211,39 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
         module: &ModuleId,
         function: &IdentStr,
         type_args: Vec<TypeTag>,
-        signers: Vec<RawAddress>,
-        txn_args: Vec<TransactionArgument>,
+        signers: Vec<ParsedAddress>,
+        txn_args: Vec<MoveValue>,
         gas_budget: Option<u64>,
         _extra_args: Self::ExtraRunArgs,
-    ) -> Result<Option<String>> {
+    ) -> Result<(Option<String>, SerializedReturnValues)> {
         let signers: Vec<_> = signers
             .into_iter()
             .map(|addr| self.compiled_state().resolve_address(&addr))
             .collect();
 
-        let args = convert_txn_args(&txn_args);
-        self.perform_session_action(gas_budget, |session, gas_status| {
-            session.execute_script_function(module, function, type_args, args, signers, gas_status)
-        })
-        .map_err(|e| {
-            anyhow!(
-                "Function execution failed with VMError: {}",
-                format_vm_error(&e)
-            )
-        })?;
-        Ok(None)
+        let args = txn_args
+            .iter()
+            .map(|arg| arg.simple_serialize().unwrap())
+            .collect::<Vec<_>>();
+        // TODO rethink testing signer args
+        let args = signers
+            .iter()
+            .map(|a| MoveValue::Signer(*a).simple_serialize().unwrap())
+            .chain(args)
+            .collect();
+        let serialized_return_values = self
+            .perform_session_action(gas_budget, |session, gas_status| {
+                session.execute_function_bypass_visibility(
+                    module, function, type_args, args, gas_status,
+                )
+            })
+            .map_err(|e| {
+                anyhow!(
+                    "Function execution failed with VMError: {}",
+                    format_vm_error(&e)
+                )
+            })?;
+        Ok((None, serialized_return_values))
     }
 
     fn view_data(
@@ -258,36 +285,48 @@ pub fn format_vm_error(e: &VMError) -> String {
 }
 
 impl<'a> SimpleVMTestAdapter<'a> {
-    fn perform_session_action(
+    fn perform_session_action<Ret>(
         &mut self,
         gas_budget: Option<u64>,
-        f: impl FnOnce(&mut Session<InMemoryStorage>, &mut GasStatus) -> VMResult<()>,
-    ) -> VMResult<()> {
+        f: impl FnOnce(&mut Session<InMemoryStorage>, &mut GasStatus) -> VMResult<Ret>,
+    ) -> VMResult<Ret> {
         // start session
-        let vm = MoveVM::new(move_stdlib::natives::all_natives(STD_ADDR)).unwrap();
+        let vm = MoveVM::new(move_stdlib::natives::all_natives(
+            STD_ADDR,
+            // TODO: come up with a suitable gas schedule
+            move_stdlib::natives::GasParameters::zeros(),
+        ))
+        .unwrap();
         let (mut session, mut gas_status) = {
-            let gas_status = move_cli::sandbox::utils::get_gas_status(gas_budget).unwrap();
+            let gas_status = move_cli::sandbox::utils::get_gas_status(
+                &move_vm_test_utils::gas_schedule::INITIAL_COST_SCHEDULE,
+                gas_budget,
+            )
+            .unwrap();
             let session = vm.new_session(&self.storage);
             (session, gas_status)
         };
 
         // perform op
-        f(&mut session, &mut gas_status)?;
+        let res = f(&mut session, &mut gas_status)?;
 
         // save changeset
         // TODO support events
         let (changeset, _events) = session.finish()?;
         self.storage.apply(changeset).unwrap();
-        Ok(())
+        Ok(res)
     }
 }
 
 static PRECOMPILED_MOVE_STDLIB: Lazy<FullyCompiledProgram> = Lazy::new(|| {
     let program_res = move_compiler::construct_pre_compiled_lib(
-        &move_stdlib::move_stdlib_files(),
+        vec![PackagePaths {
+            name: None,
+            paths: move_stdlib::move_stdlib_files(),
+            named_address_map: move_stdlib::move_stdlib_named_addresses(),
+        }],
         None,
-        move_compiler::Flags::empty().set_sources_shadow_deps(false),
-        move_stdlib::move_stdlib_named_addresses(),
+        move_compiler::Flags::empty(),
     )
     .unwrap();
     match program_res {
@@ -300,10 +339,13 @@ static PRECOMPILED_MOVE_STDLIB: Lazy<FullyCompiledProgram> = Lazy::new(|| {
 });
 
 static MOVE_STDLIB_COMPILED: Lazy<Vec<CompiledModule>> = Lazy::new(|| {
-    let (files, units_res) = move_compiler::Compiler::new(&move_stdlib::move_stdlib_files(), &[])
-        .set_named_address_values(move_stdlib::move_stdlib_named_addresses())
-        .build()
-        .unwrap();
+    let (files, units_res) = move_compiler::Compiler::from_files(
+        move_stdlib::move_stdlib_files(),
+        vec![],
+        move_stdlib::move_stdlib_named_addresses(),
+    )
+    .build()
+    .unwrap();
     match units_res {
         Err(diags) => {
             eprintln!("!!!Standard library failed to compile!!!");

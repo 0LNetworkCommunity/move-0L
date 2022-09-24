@@ -1,11 +1,13 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     command_line as cli,
     diagnostics::{codes::Severity, Diagnostic, Diagnostics},
+    naming::ast::ModuleDefinition,
 };
-use move_core_types::account_address::AccountAddress;
+use clap::*;
 use move_ir_types::location::*;
 use move_symbol_pool::Symbol;
 use petgraph::{algo::astar as petgraph_astar, graphmap::DiGraphMap};
@@ -13,10 +15,8 @@ use std::{
     collections::BTreeMap,
     fmt,
     hash::Hash,
-    num::ParseIntError,
     sync::atomic::{AtomicUsize, Ordering as AtomicOrdering},
 };
-use structopt::*;
 
 pub mod ast_debug;
 pub mod remembering_unique_map;
@@ -27,137 +27,15 @@ pub mod unique_set;
 // Numbers
 //**************************************************************************************************
 
-#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Clone, Copy)]
-#[repr(u32)]
-/// Number format enum, the u32 value represents the base
-pub enum NumberFormat {
-    Decimal = 10,
-    Hex = 16,
-}
-
-// Determines the base of the number literal, depending on the prefix
-fn determine_num_text_and_base(s: &str) -> (&str, NumberFormat) {
-    match s.strip_prefix("0x") {
-        Some(s_hex) => (s_hex, NumberFormat::Hex),
-        None => (s, NumberFormat::Decimal),
-    }
-}
-
-// Parse a u8 from a decimal or hex encoding
-pub fn parse_u8(s: &str) -> Result<(u8, NumberFormat), ParseIntError> {
-    let (txt, base) = determine_num_text_and_base(s);
-    Ok((u8::from_str_radix(txt, base as u32)?, base))
-}
-
-// Parse a u64 from a decimal or hex encoding
-pub fn parse_u64(s: &str) -> Result<(u64, NumberFormat), ParseIntError> {
-    let (txt, base) = determine_num_text_and_base(s);
-    Ok((u64::from_str_radix(txt, base as u32)?, base))
-}
-
-// Parse a u128 from a decimal or hex encoding
-pub fn parse_u128(s: &str) -> Result<(u128, NumberFormat), ParseIntError> {
-    let (txt, base) = determine_num_text_and_base(s);
-    Ok((u128::from_str_radix(txt, base as u32)?, base))
-}
+pub use move_command_line_common::parser::{
+    parse_address_number as parse_address, parse_u128, parse_u64, parse_u8, NumberFormat,
+};
 
 //**************************************************************************************************
 // Address
 //**************************************************************************************************
 
-/// Numerical address represents non-named address values
-/// or the assigned value of a named address
-#[derive(Clone, Copy)]
-pub struct NumericalAddress {
-    /// the number for the address
-    bytes: AccountAddress,
-    /// The format (e.g. decimal or hex) for displaying the number
-    format: NumberFormat,
-}
-
-impl NumericalAddress {
-    // bytes used for errors when an address is not known but is needed
-    pub const DEFAULT_ERROR_ADDRESS: Self = NumericalAddress {
-        bytes: AccountAddress::new([
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
-        ]),
-        format: NumberFormat::Hex,
-    };
-
-    pub const fn new(bytes: [u8; AccountAddress::LENGTH], format: NumberFormat) -> Self {
-        Self {
-            bytes: AccountAddress::new(bytes),
-            format,
-        }
-    }
-
-    pub fn into_inner(self) -> AccountAddress {
-        self.bytes
-    }
-
-    pub fn into_bytes(self) -> [u8; AccountAddress::LENGTH] {
-        self.bytes.into_bytes()
-    }
-
-    pub fn parse_str(s: &str) -> Result<NumericalAddress, String> {
-        let (n, format) = match parse_u128(s) {
-            Ok(res) => res,
-            Err(_) => {
-                // TODO the kind of error is in an unstable nightly API
-                // But currently the only way this should fail is if the number is too long
-                return Err(
-                    "Invalid address literal. The numeric value is too large. The maximum size is \
-                     16 bytes"
-                        .to_owned(),
-                );
-            }
-        };
-        Ok(NumericalAddress {
-            bytes: AccountAddress::new(n.to_be_bytes()),
-            format,
-        })
-    }
-}
-
-impl AsRef<[u8]> for NumericalAddress {
-    fn as_ref(&self) -> &[u8] {
-        self.bytes.as_ref()
-    }
-}
-
-impl fmt::Display for NumericalAddress {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.format {
-            NumberFormat::Decimal => {
-                let n = u128::from_be_bytes(self.bytes.into_bytes());
-                write!(f, "{}", n)
-            }
-            NumberFormat::Hex => write!(f, "{:#X}", self),
-        }
-    }
-}
-
-impl fmt::Debug for NumericalAddress {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-impl fmt::UpperHex for NumericalAddress {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoded = hex::encode_upper(self.as_ref());
-        let dropped = encoded
-            .chars()
-            .skip_while(|c| c == &'0')
-            .collect::<String>();
-        let prefix = if f.alternate() { "0x" } else { "" };
-        if dropped.is_empty() {
-            write!(f, "{}0", prefix)
-        } else {
-            write!(f, "{}{}", prefix, dropped)
-        }
-    }
-}
+pub use move_command_line_common::address::NumericalAddress;
 
 pub fn parse_named_address(s: &str) -> anyhow::Result<(String, NumericalAddress)> {
     let before_after = s.split('=').collect::<Vec<_>>();
@@ -174,93 +52,6 @@ pub fn parse_named_address(s: &str) -> anyhow::Result<(String, NumericalAddress)
         .map_err(|err| anyhow::format_err!("{}", err))?;
 
     Ok((name, addr))
-}
-
-pub fn verify_and_create_named_address_mapping(
-    named_addresses: Vec<(String, NumericalAddress)>,
-) -> anyhow::Result<BTreeMap<String, NumericalAddress>> {
-    let mut mapping = BTreeMap::new();
-    let mut invalid_mappings = BTreeMap::new();
-    for (name, addr_bytes) in named_addresses {
-        match mapping.insert(name.clone(), addr_bytes) {
-            Some(other_addr) if other_addr != addr_bytes => {
-                invalid_mappings
-                    .entry(name)
-                    .or_insert_with(Vec::new)
-                    .push(other_addr);
-            }
-            None | Some(_) => (),
-        }
-    }
-
-    if !invalid_mappings.is_empty() {
-        let redefinitions = invalid_mappings
-            .into_iter()
-            .map(|(name, addr_bytes)| {
-                format!(
-                    "{} is assigned differing values {} and {}",
-                    name,
-                    addr_bytes
-                        .iter()
-                        .map(|x| format!("{}", x))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                    mapping[&name]
-                )
-            })
-            .collect::<Vec<_>>();
-
-        anyhow::bail!(
-            "Redefinition of named addresses found in arguments to compiler: {}",
-            redefinitions.join(", ")
-        )
-    }
-
-    Ok(mapping)
-}
-
-impl PartialOrd for NumericalAddress {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for NumericalAddress {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let Self {
-            bytes: self_bytes,
-            format: _,
-        } = self;
-        let Self {
-            bytes: other_bytes,
-            format: _,
-        } = other;
-        self_bytes.cmp(other_bytes)
-    }
-}
-
-impl PartialEq for NumericalAddress {
-    fn eq(&self, other: &Self) -> bool {
-        let Self {
-            bytes: self_bytes,
-            format: _,
-        } = self;
-        let Self {
-            bytes: other_bytes,
-            format: _,
-        } = other;
-        self_bytes == other_bytes
-    }
-}
-impl Eq for NumericalAddress {}
-
-impl Hash for NumericalAddress {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let Self {
-            bytes: self_bytes,
-            format: _,
-        } = self;
-        self_bytes.hash(state)
-    }
 }
 
 //**************************************************************************************************
@@ -338,21 +129,59 @@ pub fn shortest_cycle<'a, T: Ord + Hash>(
 // Compilation Env
 //**************************************************************************************************
 
+pub type NamedAddressMap = BTreeMap<Symbol, NumericalAddress>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NamedAddressMapIndex(usize);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NamedAddressMaps(Vec<NamedAddressMap>);
+
+impl NamedAddressMaps {
+    pub fn new() -> Self {
+        Self(vec![])
+    }
+
+    pub fn insert(&mut self, m: NamedAddressMap) -> NamedAddressMapIndex {
+        let index = self.0.len();
+        self.0.push(m);
+        NamedAddressMapIndex(index)
+    }
+
+    pub fn get(&self, idx: NamedAddressMapIndex) -> &NamedAddressMap {
+        &self.0[idx.0]
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackagePaths<Path: Into<Symbol> = Symbol, NamedAddress: Into<Symbol> = Symbol> {
+    pub name: Option<Symbol>,
+    pub paths: Vec<Path>,
+    pub named_address_map: BTreeMap<NamedAddress, NumericalAddress>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexedPackagePath {
+    pub package: Option<Symbol>,
+    pub path: Symbol,
+    pub named_address_map: NamedAddressMapIndex,
+}
+
+pub type AttributeDeriver = dyn Fn(&mut CompilationEnv, &mut ModuleDefinition);
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompilationEnv {
     flags: Flags,
     diags: Diagnostics,
-    named_address_mapping: BTreeMap<Symbol, NumericalAddress>,
     // TODO(tzakian): Remove the global counter and use this counter instead
     // pub counter: u64,
 }
 
 impl CompilationEnv {
-    pub fn new(flags: Flags, named_address_mapping: BTreeMap<Symbol, NumericalAddress>) -> Self {
+    pub fn new(flags: Flags) -> Self {
         Self {
             flags,
             diags: Diagnostics::new(),
-            named_address_mapping,
         }
     }
 
@@ -395,10 +224,6 @@ impl CompilationEnv {
     pub fn flags(&self) -> &Flags {
         &self.flags
     }
-
-    pub fn named_address_mapping(&self) -> &BTreeMap<Symbol, NumericalAddress> {
-        &self.named_address_mapping
-    }
 }
 
 //**************************************************************************************************
@@ -436,43 +261,100 @@ pub fn format_comma<T: fmt::Display, I: IntoIterator<Item = T>>(items: I) -> Str
 // Flags
 //**************************************************************************************************
 
-#[derive(Clone, Debug, Eq, PartialEq, StructOpt)]
+#[derive(Clone, Debug, Eq, PartialEq, Parser)]
 pub struct Flags {
     /// Compile in test mode
-    #[structopt(
+    #[clap(
         short = cli::TEST_SHORT,
         long = cli::TEST,
     )]
     test: bool,
 
-    /// If set, do not allow modules defined in source_files to shadow modules of the same id that
-    /// exist in dependencies. Checking will fail in this case.
-    #[structopt(
-        name = "SOURCES_DO_NOT_SHADOW_DEPS",
-        short = cli::NO_SHADOW_SHORT,
-        long = cli::NO_SHADOW,
+    /// Compile in verification mode
+    #[clap(
+    short = cli::VERIFY_SHORT,
+    long = cli::VERIFY,
     )]
-    no_shadow: bool,
+    verify: bool,
+
+    /// Compilation flavor.
+    #[clap(
+        long = cli::FLAVOR,
+    )]
+    flavor: String,
+
+    /// Bytecode version.
+    #[clap(
+        long = cli::BYTECODE_VERSION,
+    )]
+    bytecode_version: Option<u32>,
+
+    /// If set, source files will not shadow dependency files. If the same file is passed to both,
+    /// an error will be raised
+    #[clap(
+        name = "SOURCES_SHADOW_DEPS",
+        short = cli::SHADOW_SHORT,
+        long = cli::SHADOW,
+    )]
+    shadow: bool,
+
+    /// Internal flag used by the model builder to maintain functions which would be otherwise
+    /// included only in tests, without creating the unit test code regular tests do.
+    #[clap(skip)]
+    keep_testing_functions: bool,
 }
 
 impl Flags {
     pub fn empty() -> Self {
         Self {
             test: false,
-            no_shadow: false,
+            verify: false,
+            shadow: false,
+            flavor: "".to_string(),
+            bytecode_version: None,
+            keep_testing_functions: false,
         }
     }
 
     pub fn testing() -> Self {
         Self {
             test: true,
-            no_shadow: false,
+            verify: false,
+            shadow: false,
+            flavor: "".to_string(),
+            bytecode_version: None,
+            keep_testing_functions: false,
+        }
+    }
+
+    pub fn verification() -> Self {
+        Self {
+            test: false,
+            verify: true,
+            shadow: true, // allows overlapping between sources and deps
+            flavor: "".to_string(),
+            bytecode_version: None,
+            keep_testing_functions: false,
+        }
+    }
+
+    pub fn set_flavor(self, flavor: impl ToString) -> Self {
+        Self {
+            flavor: flavor.to_string(),
+            ..self
+        }
+    }
+
+    pub fn set_keep_testing_functions(self, value: bool) -> Self {
+        Self {
+            keep_testing_functions: value,
+            ..self
         }
     }
 
     pub fn set_sources_shadow_deps(self, sources_shadow_deps: bool) -> Self {
         Self {
-            no_shadow: !sources_shadow_deps,
+            shadow: sources_shadow_deps,
             ..self
         }
     }
@@ -485,8 +367,24 @@ impl Flags {
         self.test
     }
 
+    pub fn keep_testing_functions(&self) -> bool {
+        self.test || self.keep_testing_functions
+    }
+
+    pub fn is_verification(&self) -> bool {
+        self.verify
+    }
+
     pub fn sources_shadow_deps(&self) -> bool {
-        !self.no_shadow
+        self.shadow
+    }
+
+    pub fn has_flavor(&self, flavor: &str) -> bool {
+        self.flavor == flavor
+    }
+
+    pub fn bytecode_version(&self) -> Option<u32> {
+        self.bytecode_version
     }
 }
 
@@ -514,6 +412,8 @@ pub mod known_attributes {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub enum KnownAttribute {
         Testing(TestingAttribute),
+        Verification(VerificationAttribute),
+        Native(NativeAttribute),
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -524,6 +424,18 @@ pub mod known_attributes {
         Test,
         // This test is expected to fail
         ExpectedFailure,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum VerificationAttribute {
+        // The associated AST node will be included in the compilation in prove mode
+        VerifyOnly,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum NativeAttribute {
+        // It is a fake native function that actually compiles to a bytecode instruction
+        BytecodeInstruction,
     }
 
     impl fmt::Display for AttributePosition {
@@ -550,6 +462,12 @@ pub mod known_attributes {
                 TestingAttribute::EXPECTED_FAILURE => {
                     Self::Testing(TestingAttribute::ExpectedFailure)
                 }
+                VerificationAttribute::VERIFY_ONLY => {
+                    Self::Verification(VerificationAttribute::VerifyOnly)
+                }
+                NativeAttribute::BYTECODE_INSTRUCTION => {
+                    Self::Native(NativeAttribute::BytecodeInstruction)
+                }
                 _ => return None,
             })
         }
@@ -557,12 +475,16 @@ pub mod known_attributes {
         pub const fn name(&self) -> &str {
             match self {
                 Self::Testing(a) => a.name(),
+                Self::Verification(a) => a.name(),
+                Self::Native(a) => a.name(),
             }
         }
 
         pub fn expected_positions(&self) -> &'static BTreeSet<AttributePosition> {
             match self {
                 Self::Testing(a) => a.expected_positions(),
+                Self::Verification(a) => a.expected_positions(),
+                Self::Native(a) => a.expected_positions(),
             }
         }
     }
@@ -602,6 +524,52 @@ pub mod known_attributes {
                 TestingAttribute::TestOnly => &*TEST_ONLY_POSITIONS,
                 TestingAttribute::Test => &*TEST_POSITIONS,
                 TestingAttribute::ExpectedFailure => &*EXPECTED_FAILURE_POSITIONS,
+            }
+        }
+    }
+
+    impl VerificationAttribute {
+        pub const VERIFY_ONLY: &'static str = "verify_only";
+
+        pub const fn name(&self) -> &str {
+            match self {
+                Self::VerifyOnly => Self::VERIFY_ONLY,
+            }
+        }
+
+        pub fn expected_positions(&self) -> &'static BTreeSet<AttributePosition> {
+            static VERIFY_ONLY_POSITIONS: Lazy<BTreeSet<AttributePosition>> = Lazy::new(|| {
+                IntoIterator::into_iter([
+                    AttributePosition::AddressBlock,
+                    AttributePosition::Module,
+                    AttributePosition::Use,
+                    AttributePosition::Friend,
+                    AttributePosition::Constant,
+                    AttributePosition::Struct,
+                    AttributePosition::Function,
+                ])
+                .collect()
+            });
+            match self {
+                Self::VerifyOnly => &*VERIFY_ONLY_POSITIONS,
+            }
+        }
+    }
+
+    impl NativeAttribute {
+        pub const BYTECODE_INSTRUCTION: &'static str = "bytecode_instruction";
+
+        pub const fn name(&self) -> &str {
+            match self {
+                NativeAttribute::BytecodeInstruction => Self::BYTECODE_INSTRUCTION,
+            }
+        }
+
+        pub fn expected_positions(&self) -> &'static BTreeSet<AttributePosition> {
+            static BYTECODE_INSTRUCTION_POSITIONS: Lazy<BTreeSet<AttributePosition>> =
+                Lazy::new(|| IntoIterator::into_iter([AttributePosition::Function]).collect());
+            match self {
+                NativeAttribute::BytecodeInstruction => &*BYTECODE_INSTRUCTION_POSITIONS,
             }
         }
     }

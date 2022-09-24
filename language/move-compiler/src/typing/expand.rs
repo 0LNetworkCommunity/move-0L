@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use super::core::{self, Context};
@@ -6,6 +7,7 @@ use crate::{
     diag,
     expansion::ast::Value_,
     naming::ast::{BuiltinTypeName_, FunctionSignature, Type, TypeName_, Type_},
+    parser::ast::Ability_,
     typing::ast as T,
 };
 use move_ir_types::location::*;
@@ -33,7 +35,7 @@ pub fn function_signature(context: &mut Context, sig: &mut FunctionSignature) {
 // Types
 //**************************************************************************************************
 
-fn expected_types(context: &mut Context, ss: &mut Vec<Option<Type>>) {
+fn expected_types(context: &mut Context, ss: &mut [Option<Type>]) {
     for st_opt in ss.iter_mut().flatten() {
         type_(context, st_opt);
     }
@@ -141,7 +143,8 @@ pub fn exp(context: &mut Context, e: &mut T::Exp) {
         E::Use(v) => {
             let from_user = false;
             let var = *v;
-            e.exp.value = if core::is_implicitly_copyable(&context.subst, &e.ty) {
+            let abs = core::infer_abilities(context, &context.subst, e.ty.clone());
+            e.exp.value = if abs.has_ability_(Ability_::Copy) {
                 E::Copy { from_user, var }
             } else {
                 E::Move { from_user, var }

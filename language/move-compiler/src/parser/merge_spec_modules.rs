@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Merges specification modules into their target modules.
@@ -8,11 +9,13 @@
 //! - Similarly, we also *may* want the spec module not be able to see target module `use`
 //!   declarations, and require it to repeat them.
 //! A solution to both problems can be to mark names introduced by `use` to whether they
-//! are for specs or not, and allow the older to resolve only in spec contexts.
+//! are for specs or not, and allow the later to resolve only in spec contexts.
 
 use crate::{
     diag,
-    parser::ast::{Definition, LeadingNameAccess_, ModuleDefinition, ModuleMember, Program},
+    parser::ast::{
+        Definition, LeadingNameAccess_, ModuleDefinition, ModuleMember, PackageDefinition, Program,
+    },
     shared::*,
 };
 use move_symbol_pool::Symbol;
@@ -21,6 +24,7 @@ use std::collections::BTreeMap;
 /// Given a parsed program, merge all specification modules into their target modules.
 pub fn program(compilation_env: &mut CompilationEnv, prog: Program) -> Program {
     let Program {
+        named_address_maps,
         source_definitions,
         lib_definitions,
     } = prog;
@@ -58,6 +62,7 @@ pub fn program(compilation_env: &mut CompilationEnv, prog: Program) -> Program {
         compilation_env.add_diag(diag!(Declarations::InvalidSpec, (m.name.loc(), msg)))
     }
     Program {
+        named_address_maps,
         source_definitions,
         lib_definitions,
     }
@@ -65,23 +70,38 @@ pub fn program(compilation_env: &mut CompilationEnv, prog: Program) -> Program {
 
 fn extract_spec_modules(
     spec_modules: &mut BTreeMap<(Option<LeadingNameAccess_>, Symbol), ModuleDefinition>,
-    defs: Vec<Definition>,
-) -> Vec<Definition> {
-    use Definition::*;
+    defs: Vec<PackageDefinition>,
+) -> Vec<PackageDefinition> {
+    // TODO check package name and address mappings line up
     defs.into_iter()
-        .filter_map(|def| match def {
-            Module(m) => extract_spec_module(spec_modules, None, m).map(Module),
-            Address(mut a) => {
-                let addr_ = Some(&a.addr.value);
-                a.modules = a
-                    .modules
-                    .into_iter()
-                    .filter_map(|m| extract_spec_module(spec_modules, addr_, m))
-                    .collect::<Vec<_>>();
-                Some(Address(a))
-            }
-            Definition::Script(s) => Some(Script(s)),
-        })
+        .filter_map(
+            |PackageDefinition {
+                 package,
+                 named_address_map,
+                 def,
+             }| {
+                let def = match def {
+                    Definition::Module(m) => {
+                        Definition::Module(extract_spec_module(spec_modules, None, m)?)
+                    }
+                    Definition::Address(mut a) => {
+                        let addr_ = Some(&a.addr.value);
+                        a.modules = a
+                            .modules
+                            .into_iter()
+                            .filter_map(|m| extract_spec_module(spec_modules, addr_, m))
+                            .collect::<Vec<_>>();
+                        Definition::Address(a)
+                    }
+                    Definition::Script(s) => Definition::Script(s),
+                };
+                Some(PackageDefinition {
+                    package,
+                    named_address_map,
+                    def,
+                })
+            },
+        )
         .collect()
 }
 
@@ -91,6 +111,7 @@ fn extract_spec_module(
     m: ModuleDefinition,
 ) -> Option<ModuleDefinition> {
     if m.is_spec_module {
+        // TODO check for duplicate spec modules?
         spec_modules.insert(module_key(address_opt, &m), m);
         None
     } else {
@@ -100,10 +121,11 @@ fn extract_spec_module(
 
 fn merge_spec_modules(
     spec_modules: &mut BTreeMap<(Option<LeadingNameAccess_>, Symbol), ModuleDefinition>,
-    defs: &mut Vec<Definition>,
+    defs: &mut [PackageDefinition],
 ) {
     use Definition::*;
-    for def in defs.iter_mut() {
+    // TODO check package name and address mappings line up
+    for PackageDefinition { def, .. } in defs {
         match def {
             Module(m) => merge_spec_module(spec_modules, None, m),
             Address(a) => {

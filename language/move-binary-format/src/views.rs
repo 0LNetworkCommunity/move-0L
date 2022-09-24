@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! An alternate representation of the file format built on top of the existing format.
@@ -478,6 +479,10 @@ impl<'a, T: ModuleAccess> FunctionDefinitionView<'a, T> {
 
     pub fn visibility(&self) -> Visibility {
         self.function_def.visibility
+    }
+
+    pub fn is_entry(&self) -> bool {
+        self.function_def.is_entry
     }
 
     pub fn is_native(&self) -> bool {

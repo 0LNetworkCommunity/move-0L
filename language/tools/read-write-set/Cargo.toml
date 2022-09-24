@@ -7,7 +7,7 @@ repository = "https://github.com/diem/diem"
 homepage = "https://diem.com"
 license = "Apache-2.0"
 publish = false
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 anyhow = "1.0.52"
@@ -16,7 +16,5 @@ move-bytecode-utils = { path = "../move-bytecode-utils" }
 move-core-types = { path = "../../move-core/types" }
 move-model = { path = "../../move-model" }
 prover_bytecode = { path = "../../move-prover/bytecode", package="move-stackless-bytecode" }
-move-resource-viewer = { path = "../move-resource-viewer" }
 move-read-write-set-types = { path = "types" }
 read-write-set-dynamic = { path = "dynamic" }
-workspace-hack = { version = "0.1", path = "../../../crates/workspace-hack" }

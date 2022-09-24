@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::context::{CompiledDependency, Context, MaterializedPools, TABLE_MAX_SIZE};
@@ -26,6 +27,7 @@ use std::{
         hash_map::Entry::{Occupied, Vacant},
         BTreeSet, HashMap, HashSet,
     },
+    fmt::Write,
 };
 
 macro_rules! record_src_loc {
@@ -194,24 +196,26 @@ fn label_verification_error(
 ) -> Result<()> {
     let mut message = "Invalid block labels".to_string();
     if !redeclared.is_empty() {
-        message.push_str(&format!(
+        write!(
+            &mut message,
             ", labels were declared twice ({})",
             redeclared
                 .iter()
                 .map(|l| l.to_string())
                 .collect::<Vec<_>>()
-                .join(", "),
-        ));
+                .join(", ")
+        )?;
     }
     if !undeclared.is_empty() {
-        message.push_str(&format!(
+        write!(
+            &mut message,
             ", labels were used without being declared ({})",
             undeclared
                 .iter()
                 .map(|l| l.to_string())
                 .collect::<Vec<_>>()
-                .join(", "),
-        ));
+                .join(", ")
+        )?;
     }
     bail!(message);
 }
@@ -381,6 +385,7 @@ pub fn compile_script<'a>(
         identifiers,
         address_identifiers,
         constant_pool,
+        metadata: vec![],
 
         type_parameters: sig.type_parameters,
         parameters: parameters_sig_idx,
@@ -477,6 +482,7 @@ pub fn compile_module<'a>(
         identifiers,
         address_identifiers,
         constant_pool,
+        metadata: vec![],
         struct_defs,
         function_defs,
     };
@@ -555,6 +561,7 @@ fn compile_explicit_dependency_declarations(
             identifiers,
             address_identifiers,
             constant_pool,
+            metadata: vec![],
             struct_defs: vec![],
             function_defs: vec![],
         };
@@ -614,7 +621,7 @@ fn struct_type_parameters(ast_tys: &[ast::StructTypeParameter]) -> Vec<StructTyp
 fn abilities(abilities: &BTreeSet<ast::Ability>) -> AbilitySet {
     abilities
         .iter()
-        .map(|a| ability(a))
+        .map(ability)
         .fold(AbilitySet::EMPTY, |acc, a| acc | a)
 }
 
@@ -838,9 +845,9 @@ fn compile_function(
 
     let ast_function = ast_function.value;
 
+    let is_entry = ast_function.is_entry;
     let visibility = match ast_function.visibility {
         FunctionVisibility::Public => Visibility::Public,
-        FunctionVisibility::Script => Visibility::Script,
         FunctionVisibility::Friend => Visibility::Friend,
         FunctionVisibility::Internal => Visibility::Private,
     };
@@ -855,6 +862,7 @@ fn compile_function(
     Ok(FunctionDefinition {
         function: fh_idx,
         visibility,
+        is_entry,
         acquires_global_resources,
         code,
     })

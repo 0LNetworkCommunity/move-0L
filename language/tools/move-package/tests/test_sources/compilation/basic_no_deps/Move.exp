@@ -1,7 +1,6 @@
 CompiledPackageInfo {
     package_name: "test",
     address_alias_instantiation: {},
-    module_resolution_metadata: {},
     source_digest: Some(
         "ELIDED_FOR_TEST",
     ),
@@ -15,5 +14,7 @@ CompiledPackageInfo {
         ),
         force_recompilation: false,
         additional_named_addresses: {},
+        architecture: None,
+        fetch_deps_only: false,
     },
 }

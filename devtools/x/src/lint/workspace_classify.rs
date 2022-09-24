@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config::TestOnlyConfig;
@@ -36,11 +37,6 @@ impl<'cfg> PackageLinter for DefaultOrTestOnly<'cfg> {
         out: &mut LintFormatter<'l, '_>,
     ) -> Result<RunStatus<'l>> {
         let package = ctx.metadata();
-        if package.name() == ctx.project_ctx().workspace_hack_name() {
-            // Skip over the workspace-hack package.
-            return Ok(RunStatus::Executed);
-        }
-
         let default_members = ctx.project_ctx().default_members()?;
 
         let binary_kind = package

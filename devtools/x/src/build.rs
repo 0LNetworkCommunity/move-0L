@@ -1,24 +1,25 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
     cargo::{build_args::BuildArgs, selected_package::SelectedPackageArgs, CargoCommand},
     context::XContext,
     Result,
 };
+use clap::Parser;
 use log::info;
 use std::ffi::OsString;
-use structopt::StructOpt;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct Args {
-    #[structopt(flatten)]
+    #[clap(flatten)]
     package_args: SelectedPackageArgs,
-    #[structopt(flatten)]
+    #[clap(flatten)]
     build_args: BuildArgs,
-    #[structopt(long, parse(from_os_str))]
+    #[clap(long, parse(from_os_str))]
     /// Copy final artifacts to this directory (unstable)
     out_dir: Option<OsString>,
-    #[structopt(long)]
+    #[clap(long)]
     /// Output the build plan in JSON (unstable)
     build_plan: bool,
 }

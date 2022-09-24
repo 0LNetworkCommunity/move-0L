@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use super::cfg::BlockCFG;
@@ -221,7 +222,7 @@ mod count {
             E::BinopExp(e1, op, e2) => {
                 can_subst_exp_binary(op) && can_subst_exp_single(e1) && can_subst_exp_single(e2)
             }
-            E::ExpList(es) => es.iter().all(|i| can_subst_exp_item(i)),
+            E::ExpList(es) => es.iter().all(can_subst_exp_item),
             E::Pack(_, _, fields) => fields.iter().all(|(_, _, e)| can_subst_exp_single(e)),
             E::Vector(_, _, _, eargs) => can_subst_exp_single(eargs),
 

@@ -24,20 +24,20 @@ Now let's get started!
 
 ## Step 0: Installation<span id="Step0"><span>
 
-If you haven't already, open your terminal and clone [the Diem repository](https://github.com/diem/diem):
+If you haven't already, open your terminal and clone [the Move repository](https://github.com/move-language/move):
 
 ```bash
-git clone https://github.com/diem/diem.git
+git clone https://github.com/move-language/move.git
 ```
 
-Go to the `diem` directory and run the `dev_setup.sh` script:
+Go to the `move` directory and run the `dev_setup.sh` script:
 
 ```bash
-cd diem
+cd move
 ./scripts/dev_setup.sh -ypt
 ```
 
-Follow the script's prompts in order to install all of Diem's dependencies.
+Follow the script's prompts in order to install all of Move's dependencies.
 
 The script adds environment variable definitions to your `~/.profile` file.
 Include them by running this command:
@@ -46,58 +46,56 @@ Include them by running this command:
 source ~/.profile
 ````
 
-Next, install Move's command-line tools by running these commands:
+Next, install Move's command-line tool by running this commands:
 
 ```bash
-cargo install --path diem-move/df-cli
-cargo install --path language/move-analyzer
-```
-
-After running these commands, you should be able to confirm that they can be
-invoked from the command line:
-
-```
-move-analyzer --version  # Outputs: move-analyzer 0.0.0
-```
-
-The `df-cli` executable is a convenient wrapper around Move's command line
-interface. In this tutorial, we will refer to it as `move`. You may add an alias
-so that you can invoke it as such:
-
-```bash
-alias move="df-cli"
+cargo install --path language/tools/move-cli
 ```
 
 You can check that it is working by running the following command:
 
 ```bash
-move package -h
+move --help
 ```
 
 You should see something like this along with a list and description of a
 number of commands:
 
 ```
-move-package 0.1.0
-Package and build system for Move code.
+move-package
+Execute a package command. Executed in the current directory or the closest containing Move package
 
 USAGE:
-    move package [FLAGS] [OPTIONS] <SUBCOMMAND>
+    move [OPTIONS] <SUBCOMMAND>
+
+OPTIONS:
+        --abi                          Generate ABIs for packages
 ...
 ```
 
 If you want to find what commands are available and what they do, running
-a command or subcommand with the `-h` flag will print documentation.
-
-There is official Move support for Visual Studio Code. You can install this
-extension by opening VS Code, searching for the "move-analyzer" extension in
-the Extension Pane, and installing it. More detailed instructions can be found
-in the extension's [README](https://github.com/diem/diem/tree/main/language/move-analyzer/editors/code).
+a command or subcommand with the `--help` flag will print documentation.
 
 Before running the next steps, `cd` to the tutorial directory:
 ```bash
-cd <path_to_diem_repo>/language/documentation/tutorial
+cd <path_to_move>/language/documentation/tutorial
 ```
+
+
+<details>
+<summary>Visual Studio Code Move support</summary>
+There is official Move support for Visual Studio Code. You need to install
+the move analyzer first:
+
+```bash
+cargo install --path language/move-analyzer
+```
+
+Now you can install the VS extension by opening VS Code, searching for the "move-analyzer" in
+the Extension Pane, and installing it. More detailed instructions can be found
+in the extension's [README](https://github.com/move-language/move/tree/main/language/move-analyzer/editors/code).
+</details>
+
 
 ## Step 1: Writing my first Move module<span id="Step1"><span>
 
@@ -121,13 +119,13 @@ module 0xCAFE::BasicCoin {
 ```
 
 This is defining a Move
-[module](https://diem.github.io/move/modules-and-scripts.html). Modules are the
+[module](https://move-language.github.io/move/modules-and-scripts.html). Modules are the
 building block of Move code, and are defined with a specific address -- the
 address that the module can be published under. In this case, the `BasicCoin`
 module can only be published under `0xCAFE`.
 
 Let's now take a look at the next part of this file where we define a
-[struct](https://diem.github.io/move/structs-and-resources.html)
+[struct](https://move-language.github.io/move/structs-and-resources.html)
 to represent a `Coin` with a given `value`:
 
 ```
@@ -154,16 +152,16 @@ module 0xCAFE::BasicCoin {
 ```
 
 Let's take a look at this function and what it's saying:
-* It takes a [`signer`](https://diem.github.io/move/signer.html) -- an
+* It takes a [`signer`](https://move-language.github.io/move/signer.html) -- an
   unforgeable token that represents control over a particular address, and
   a `value` to mint.
 * It creates a `Coin` with the given value and stores it under the
   `account` using the `move_to` operator.
 
-Let's make sure it builds! This can be done with the `package build` command from within the package folder ([`step_1/BasicCoin`](./step_1/BasicCoin/)):
+Let's make sure it builds! This can be done with the `build` command from within the package folder ([`step_1/BasicCoin`](./step_1/BasicCoin/)):
 
 ```bash
-move package build
+move build
 ```
 
 <details>
@@ -171,14 +169,14 @@ move package build
 
 * You can create an empty Move package by calling:
     ```bash
-    move package new <pkg_name>
+    move new <pkg_name>
     ```
 * Move code can also live a number of other places.  More information on the
   Move package system can be found in the [Move
-  book](https://diem.github.io/move/packages.html)
-* More information on the `Move.toml` file can be found in the [package section of the Move book](https://diem.github.io/move/packages.html#movetoml).
+  book](https://move-language.github.io/move/packages.html)
+* More information on the `Move.toml` file can be found in the [package section of the Move book](https://move-language.github.io/move/packages.html#movetoml).
 * Move also supports the idea of [named
-  addresses](https://diem.github.io/move/address.html#named-addresses) Named
+  addresses](https://move-language.github.io/move/address.html#named-addresses), Named
   addresses are a way to parametrize Move source code so that you can compile
   the module using different values for `NamedAddr` to get different bytecode
   that you can deploy, depending on what address(es) you control. They are used quite frequently, and can be defined in the `Move.toml` file in the `[addresses]` section, e.g.,
@@ -186,9 +184,9 @@ move package build
     [addresses]
     SomeNamedAddress = "0xC0FFEE"
     ```
-* [Structures](https://diem.github.io/move/structs-and-resources.html) in Move
+* [Structures](https://move-language.github.io/move/structs-and-resources.html) in Move
   can be given different
-  [abilities](https://diem.github.io/move/abilities.html) that describe what
+  [abilities](https://move-language.github.io/move/abilities.html) that describe what
   can be done with that type. There are four different abilities:
     - `copy`: Allows values of types with this ability to be copied.
     - `drop`: Allows values of types with this ability to be popped/dropped.
@@ -199,14 +197,14 @@ move package build
     in global storage and, because it has no other abilities, it cannot be
     copied, dropped, or stored as a non-key value in storage. So you can't copy
     coins, and you also can't lose coins by accident!
-* [Functions](https://diem.github.io/move/functions.html) are default
+* [Functions](https://move-language.github.io/move/functions.html) are default
     private, and can also be `public`,
-    [`public(friend)`](https://diem.github.io/move/friends.html), or
+    [`public(friend)`](https://move-language.github.io/move/friends.html), or
     `public(script)`. The last of these states that this function can be
     called from a transaction script. `public(script)` functions can also be
     called by other `public(script)` functions.
 * `move_to` is one of the [five different global storage
-  operators](https://diem.github.io/move/global-storage-operators.html).
+  operators](https://move-language.github.io/move/global-storage-operators.html).
 </details>
 
 ## Step 2: Adding unit tests to my first Move module<span id="Step2"><span>
@@ -220,7 +218,7 @@ unit tests in Rust if you're familiar with them -- tests are annotated with
 You can run the tests with the `package test` command:
 
 ```bash
-move package test
+move test
 ```
 
 Let's now take a look at the contents of the [`FirstModule.move`
@@ -234,9 +232,11 @@ module 0xCAFE::BasicCoin {
     // address value of `0xC0FFEE`.
     #[test(account = @0xC0FFEE)]
     fun test_mint_10(account: signer) acquires Coin {
-        let addr = Signer::address_of(&account);
+        let addr = 0x1::signer::address_of(&account);
         mint(account, 10);
         // Make sure there is a `Coin` resource under `addr` with a value of `10`.
+        // We can access this resource and its value since we are in the
+        // same module that defined the `Coin` resource.
         assert!(borrow_global<Coin>(addr).value == 10, 0);
     }
 }
@@ -252,7 +252,7 @@ assertion fails the unit test will fail.
 
 * There are a number of test-related annotations that are worth exploring, they
   can be found
-  [here](https://github.com/diem/diem/blob/main/language/changes/4-unit-testing.md#testing-annotations-their-meaning-and-usage).
+  [here](https://github.com/move-language/move/blob/main/language/changes/4-unit-testing.md#testing-annotations-their-meaning-and-usage).
   You'll see some of these used in Step 5.
 * Before running unit tests, you'll always need to add a dependency on the Move
   standard library. This can be done by adding an entry to the `[dependencies]`
@@ -260,32 +260,32 @@ assertion fails the unit test will fail.
 
   ```toml
   [dependencies]
-  MoveStdlib = { local = "../../../../move-stdlib/", addr_subst = { "Std" = "0x1" } }
+  MoveStdlib = { local = "../../../../move-stdlib/", addr_subst = { "std" = "0x1" } }
   ```
 
   Note that you may need to alter the path to point to the `move-stdlib` directory under
-  `<path_to_diem>/language`. You can also specify git dependencies. You can read more on Move
-  package dependencies [here](https://diem.github.io/move/packages.html#movetoml).
+  `<path_to_move>/language`. You can also specify git dependencies. You can read more on Move
+  package dependencies [here](https://move-language.github.io/move/packages.html#movetoml).
 
 
 #### Exercises
 * Change the assertion to `11` so that the test fails. Find a flag that you can
-  pass to the `move package test` command that will show you the global state when
+  pass to the `move test` command that will show you the global state when
   the test fails. It should look something like this:
   ```
     ┌── test_mint_10 ──────
     │ error[E11001]: test failure
-    │    ┌─ step_2/BasicCoin/sources/FirstModule.move:22:9
+    │    ┌─ ./sources/FirstModule.move:24:9
     │    │
     │ 18 │     fun test_mint_10(account: signer) acquires Coin {
     │    │         ------------ In this function in 0xcafe::BasicCoin
     │    ·
-    │ 22 │         assert!(borrow_global<Coin>(addr).value == 11, 0);
+    │ 24 │         assert!(borrow_global<Coin>(addr).value == 11, 0);
     │    │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Test was not expected to abort but it aborted with 0 here
     │
     │
     │ ────── Storage state at point of failure ──────
-    │ 0xcafe:
+    │ 0xc0ffee:
     │       => key 0xcafe::BasicCoin::Coin {
     │           value: 10
     │       }
@@ -293,7 +293,7 @@ assertion fails the unit test will fail.
     └──────────────────
   ```
 * Find a flag that allows you to gather test coverage information, and
-  then play around with using the `move package coverage` command to look at
+  then play around with using the `move coverage` command to look at
   coverage statistics and source coverage.
 
 </details>
@@ -359,7 +359,7 @@ method directly from a transaction, you'll want to change its signature to:
 ```
 public(script) fun transfer(from: signer, to: address, amount: u64) acquires Balance { ... }
 ```
-Read more on Move function visibilities [here](https://diem.github.io/move/functions.html#visibility).
+Read more on Move function visibilities [here](https://move-language.github.io/move/functions.html#visibility).
 </details>
 <details>
 <summary>Comparison with Ethereum/Solidity</summary>
@@ -376,18 +376,18 @@ The Ethereum blockchain state might look like this:
 
 We have created a Move package for you in folder `step_4` called `BasicCoin`. The `sources` folder contains source code for
 all your Move modules in the package, including `BasicCoin.move`. In this section, we will take a closer look at the
-implementation of the methods inside [`BasicCoin.move`](./step_4/BasicCoin/sources/BasicCoin.move).
+implementation of the methods inside [`BasicCoin.move`](./step_4/sources/BasicCoin.move).
 
 ### Compiling our code
 
 Let's first try building the code using Move package by running the following command
 in [`step_4/BasicCoin`](./step_4/BasicCoin) folder:
 ```bash
-move package build
+move build
 ```
 
 ### Implementation of methods
-Now let's take a closer look at the implementation of the methods inside [`BasicCoin.move`]((./step_4/BasicCoin/sources/BasicCoin.move)).
+Now let's take a closer look at the implementation of the methods inside [`BasicCoin.move`](./step_4/BasicCoin/sources/BasicCoin.move).
 
 <details>
 <summary>Method <code>publish_balance</code></summary>
@@ -409,13 +409,13 @@ move_to(account, Balance { coin:  empty_coin });
 `mint` method mints coins to a given account. Here we require that `mint` must be approved
 by the module owner. We enforce this using the assert statement:
 ```
-assert!(Signer::address_of(&module_owner) == MODULE_OWNER, Errors::requires_address(ENOT_MODULE_OWNER));
+assert!(signer::address_of(&module_owner) == MODULE_OWNER, errors::requires_address(ENOT_MODULE_OWNER));
 ```
 Assert statements in Move can be used in this way: `assert!(<predicate>, <abort_code>);`. This means that if the `<predicate>`
 is false, then abort the transaction with `<abort_code>`. Here `MODULE_OWNER` and `ENOT_MODULE_OWNER` are both constants
-defined at the beginning of the module. And `Errors` module defines common error categories we can use.
+defined at the beginning of the module. And `errors` module defines common error categories we can use.
 It is important to note that Move is transactional in its execution -- so
-if an [abort](https://diem.github.io/move/abort-and-assert.html) is raised no unwinding of state
+if an [abort](https://move-language.github.io/move/abort-and-assert.html) is raised no unwinding of state
 needs to be performed, as no changes from that transaction will be persisted to the blockchain.
 
 We then deposit a coin with value `amount` to the balance of `mint_addr`.
@@ -450,7 +450,7 @@ fun withdraw(addr: address, amount: u64) : Coin acquires Balance {
 }
 ```
 At the beginning of the method, we assert that the withdrawing account has enough balance. We then use `borrow_global_mut`
-to get a mutable reference to the global storage, and `&mut` is used to create a [mutable reference](https://diem.github.io/move/references.html) to a field of a
+to get a mutable reference to the global storage, and `&mut` is used to create a [mutable reference](https://move-language.github.io/move/references.html) to a field of a
 struct. We then modify the balance through this mutable reference and return a new coin with the withdrawn amount.
 </details>
 
@@ -473,13 +473,13 @@ take a look at some tools we can use to help us write tests.
 To get started, run the `package test` command in the [`step_5/BasicCoin`](./step_5/BasicCoin) folder
 
 ```bash
-move package test
+move test
 ```
 
 You should see something like this:
 
 ```
-BUILDING MoveStdlib
+INCLUDING DEPENDENCY MoveStdlib
 BUILDING BasicCoin
 Running Move unit tests
 [ PASS    ] 0xcafe::BasicCoin::can_withdraw_amount
@@ -555,7 +555,7 @@ In definitions of both `Coin` and `Balance`, we declare the type parameter `Coin
 to be phantom because `CoinType` is not used in the struct definition or is only used as a phantom type
 parameter.
 
-Read more about phantom type parameters <a href="https://diem.github.io/move/generics.html#phantom-type-parameters">here</a>.
+Read more about phantom type parameters <a href="https://move-language.github.io/move/generics.html#phantom-type-parameters">here</a>.
 </details>
 
 ## Advanced steps
@@ -565,13 +565,22 @@ Before moving on to the next steps, let's make sure you have all the prover depe
 Try running `boogie /version `. If an error message shows up saying "command not found: boogie", you will have to run the
 setup script and source your profile:
 ```bash
-# run the following in diem repo root directory
+# run the following in move repo root directory
 ./scripts/dev_setup.sh -yp
 source ~/.profile
 ```
 ## Step 7:  Use the Move prover<span id="Step7"><span>
 
-Smart contracts deployed on the blockchain may maniputate high-value assets. As a technique that uses strict mathematical methods to describe behavior and reason correctness of computer systems, formal verification has been used in blockchains to prevent bugs in smart contracts. [The Move prover](https://github.com/diem/diem/tree/main/language/move-prover) is an evolving formal verification tool for smart contracts written in the Move language. The user can specify functional properties of smart contracts using the [Move Specification Language (MSL)](https://github.com/diem/diem/blob/main/language/move-prover/doc/user/spec-lang.md) and then use the prover to automatically check them statically. To illustrate how the prover is used, we have added the following code snippet to the [BasicCoin.move](./step_7/BasicCoin/sources/BasicCoin.move):
+Smart contracts deployed on the blockchain may manipulate high-value assets. As a technique that uses strict
+mathematical methods to describe behavior and reason correctness of computer systems, formal verification
+has been used in blockchains to prevent bugs in smart contracts. [
+The Move prover](https://github.com/move-language/move/blob/main/language/move-prover/doc/user/prover-guide.md)
+is an evolving formal verification tool for smart contracts written in the Move language. The user can specify
+functional properties of smart contracts
+using the [Move Specification Language (MSL)](https://github.com/move-language/move/blob/main/language/move-prover/doc/user/spec-lang.md)
+and then use the prover to automatically check them statically.
+To illustrate how the prover is used, we have added the following code snippet to
+the [BasicCoin.move](./step_7/BasicCoin/sources/BasicCoin.move):
 
 ```
     spec balance_of {
@@ -583,14 +592,14 @@ Informally speaking, the block `spec balance_of {...}` contains the property spe
 
 Let's first run the prover using the following command inside [`BasicCoin` directory](./step_7/BasicCoin/):
 ```bash
-move package prove
+move prove
 ```
 
 which outputs the following error information:
 
 ```
 error: abort not covered by any of the `aborts_if` clauses
-   ┌─ diem/language/documentation/hackathon-tutorial/step_7/BasicCoin/sources/BasicCoin.move:38:5
+   ┌─ ./sources/BasicCoin.move:38:5
    │
 35 │           borrow_global<Balance<CoinType>>(owner).coin.value
    │           ------------- abort happened here with execution failure
@@ -600,9 +609,9 @@ error: abort not covered by any of the `aborts_if` clauses
 40 │ │     }
    │ ╰─────^
    │
-   =     at /diem/language/documentation/hackathon-tutorial/step_7/BasicCoin/sources/BasicCoin.move:34: balance_of
+   =     at ./sources/BasicCoin.move:34: balance_of
    =         owner = 0x29
-   =     at /diem/language/documentation/hackathon-tutorial/step_7/BasicCoin/sources/BasicCoin.move:35: balance_of
+   =     at ./sources/BasicCoin.move:35: balance_of
    =         ABORTED
 
 Error: exiting with verification errors
@@ -618,7 +627,7 @@ The prover basically tells us that we need to explicitly specify the condition u
 ```
 After adding this condition, try running the `prove` command again to confirm that there are no verification errors:
 ```bash
-move package prove
+move prove
 ```
 Apart from the abort condition, we also want to define the functional properties. In Step 8, we will give more detailed introduction to the prover by specifying properties for the methods defined the `BasicCoin` module.
 
@@ -637,19 +646,20 @@ fun withdraw<CoinType>(addr: address, amount: u64) : Coin<CoinType> acquires Bal
 The method withdraws tokens with value `amount` from the address `addr` and returns a created Coin of value `amount`.  The method `withdraw` aborts when 1) `addr` does not have the resource `Balance<CoinType>` or 2) the number of tokens in `addr` is smaller than `amount`. We can define conditions like this:
 
 ```
-   spec withdraw {
+    spec withdraw {
         let balance = global<Balance<CoinType>>(addr).coin.value;
         aborts_if !exists<Balance<CoinType>>(addr);
         aborts_if balance < amount;
     }
 ```
 
-As we can see here, a spec block can contain let bindings which introduce names for expressions. `global<T>(address): T` is a built-in function that returns the resource value at `addr`. `balance` is the number of tokens owned by `addr`. `exists<T>(address): bool` is a built-in function that returns true if the resource T exists at address. Two `aborts_if` clauses correspond to the two conditions mentioned above. In general, if a function has more than one `aborts_if` condition, those conditions are or-ed with each other. By default, if a user wants to specify aborts conditions, all possible conditions need to be listed. Otherwise, the prover will generate a verification error. However, if `pragma aborts_if_is_partial` is defined in the spec block, the combined aborts condition (the or-ed individual conditions) only *imply* that the function aborts. The reader can refer to the [MSL](https://github.com/diem/diem/blob/main/language/move-prover/doc/user/spec-lang.md) document for more information.
+As we can see here, a spec block can contain let bindings which introduce names for expressions. `global<T>(address): T` is a built-in function that returns the resource value at `addr`. `balance` is the number of tokens owned by `addr`. `exists<T>(address): bool` is a built-in function that returns true if the resource T exists at address. Two `aborts_if` clauses correspond to the two conditions mentioned above. In general, if a function has more than one `aborts_if` condition, those conditions are or-ed with each other. By default, if a user wants to specify aborts conditions, all possible conditions need to be listed. Otherwise, the prover will generate a verification error. However, if `pragma aborts_if_is_partial` is defined in the spec block, the combined aborts condition (the or-ed individual conditions) only *imply* that the function aborts. The reader can refer to the
+[MSL](https://github.com/move-language/move/blob/main/language/move-prover/doc/user/spec-lang.md) document for more information.
 
 The next step is to define functional properties, which are described in the two `ensures` clauses below. First, by using the `let post` binding, `balance_post` represents the balance of `addr` after the execution, which should be equal to `balance - amount`. Then, the return value (denoted as `result`) should be a coin with value `amount`.
 
 ```
-   spec withdraw {
+    spec withdraw {
         let balance = global<Balance<CoinType>>(addr).coin.value;
         aborts_if !exists<Balance<CoinType>>(addr);
         aborts_if balance < amount;
@@ -705,8 +715,8 @@ public fun transfer<CoinType: drop>(from: &signer, to: address, amount: u64, _wi
 The method transfers the `amount` of coin from the account of `from` to the address `to`. The specification is given below:
 
 ```
-spec transfer {
-        let addr_from = Signer::address_of(from);
+    spec transfer {
+        let addr_from = signer::address_of(from);
 
         let balance_from = global<Balance<CoinType>>(addr_from).coin.value;
         let balance_to = global<Balance<CoinType>>(to).coin.value;
@@ -722,7 +732,8 @@ spec transfer {
 The `ensures` clauses specify that the `amount` number of tokens is deducted from `addr_from` and added to `to`. However, the prover will generate the error information as below:
 
 ```
-   ┌─ diem/language/documentation/hackathon-tutorial/step_7/BasicCoin/sources/BasicCoin.move:62:9
+error: post-condition does not hold
+   ┌─ ./sources/BasicCoin.move:57:9
    │
 62 │         ensures balance_from_post == balance_from - amount;
    │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

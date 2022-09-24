@@ -1,14 +1,21 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{collections::BTreeSet, sync::Arc};
+
 use crate::{
-    data_cache::TransactionDataCache, native_functions::NativeFunction, runtime::VMRuntime,
-    session::Session,
+    data_cache::TransactionDataCache, native_extensions::NativeContextExtensions,
+    native_functions::NativeFunction, runtime::VMRuntime, session::Session,
 };
-use move_binary_format::errors::{Location, VMResult};
+use move_binary_format::{
+    errors::{Location, VMResult},
+    CompiledModule,
+};
+use move_bytecode_verifier::VerifierConfig;
 use move_core_types::{
     account_address::AccountAddress, identifier::Identifier, language_storage::ModuleId,
-    resolver::MoveResolver,
+    metadata::Metadata, resolver::MoveResolver,
 };
 
 pub struct MoveVM {
@@ -16,12 +23,19 @@ pub struct MoveVM {
 }
 
 impl MoveVM {
-    pub fn new<I>(natives: I) -> VMResult<Self>
-    where
-        I: IntoIterator<Item = (AccountAddress, Identifier, Identifier, NativeFunction)>,
-    {
+    pub fn new(
+        natives: impl IntoIterator<Item = (AccountAddress, Identifier, Identifier, NativeFunction)>,
+    ) -> VMResult<Self> {
+        Self::new_with_verifier_config(natives, VerifierConfig::default())
+    }
+
+    pub fn new_with_verifier_config(
+        natives: impl IntoIterator<Item = (AccountAddress, Identifier, Identifier, NativeFunction)>,
+        verifier_config: VerifierConfig,
+    ) -> VMResult<Self> {
         Ok(Self {
-            runtime: VMRuntime::new(natives).map_err(|err| err.finish(Location::Undefined))?,
+            runtime: VMRuntime::new(natives, verifier_config)
+                .map_err(|err| err.finish(Location::Undefined))?,
         })
     }
 
@@ -43,18 +57,69 @@ impl MoveVM {
         self.runtime.new_session(remote)
     }
 
+    /// Create a new session, as in `new_session`, but provide native context extensions.
+    pub fn new_session_with_extensions<'r, S: MoveResolver>(
+        &self,
+        remote: &'r S,
+        extensions: NativeContextExtensions<'r>,
+    ) -> Session<'r, '_, S> {
+        self.runtime.new_session_with_extensions(remote, extensions)
+    }
+
     /// Load a module into VM's code cache
     pub fn load_module<'r, S: MoveResolver>(
         &self,
         module_id: &ModuleId,
         remote: &'r S,
-    ) -> VMResult<()> {
+    ) -> VMResult<Arc<CompiledModule>> {
         self.runtime
             .loader()
             .load_module(
                 module_id,
                 &TransactionDataCache::new(remote, self.runtime.loader()),
             )
-            .map(|_| ())
+            .map(|arc_module| arc_module.arc_module())
+    }
+
+    /// Allows the adapter to announce to the VM that the code loading cache should be considered
+    /// outdated. This can happen if the adapter executed a particular code publishing transaction
+    /// but decided to not commit the result to the data store. Because the code cache currently
+    /// does not support deletion, the cache will, incorrectly, still contain this module.
+    /// TODO: new loader architecture
+    pub fn mark_loader_cache_as_invalid(&self) {
+        self.runtime.loader().mark_as_invalid()
+    }
+
+    /// If the loader cache has been invalidated (either by the above call or by internal logic)
+    /// flush it so it is valid again. Notice that should only be called if there are no
+    /// outstanding sessions created from this VM.
+    /// TODO: new loader architecture
+    pub fn flush_loader_cache_if_invalidated(&self) {
+        self.runtime.loader().flush_if_invalidated()
+    }
+
+    /// Gets and clears module cache hits. This is hack which allows the adapter to see module
+    /// reads if executing multiple transactions in a VM. Without this, the adapter only sees
+    /// the first load of a module.
+    /// TODO: new loader architecture
+    pub fn get_and_clear_module_cache_hits(&self) -> BTreeSet<ModuleId> {
+        self.runtime.loader().get_and_clear_module_cache_hits()
+    }
+
+    /// Attempts to discover metadata in a given module with given key. Availability
+    /// of this data may depend on multiple aspects. In general, no hard assumptions of
+    /// availability should be made, but typically, one can expect that
+    /// the modules which have been involved in the execution of the last session are available.
+    ///
+    /// This is called by an adapter to extract, for example, debug information out of
+    /// the metadata section of the code for post mortem analysis. Notice that because
+    /// of ownership of the underlying binary representation of modules hidden behind an rwlock,
+    /// this actually has to hand back a copy of the associated metadata, so metadata should
+    /// be organized keeping this in mind.
+    ///
+    /// TODO: in the new loader architecture, as the loader is visible to the adapter, one would
+    ///   call this directly via the loader instead of the VM.
+    pub fn get_module_metadata(&self, module: ModuleId, key: &[u8]) -> Option<Metadata> {
+        self.runtime.loader().get_metadata(module, key)
     }
 }

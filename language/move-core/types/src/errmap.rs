@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::language_storage::ModuleId;
@@ -19,29 +20,12 @@ pub struct ErrorDescription {
     pub code_description: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorContext {
-    /// The error category e.g., INVALID_ARGUMENT
-    pub category: ErrorDescription,
-    /// The error reason e.g., ECANT_PAY_DEPOSIT
-    pub reason: ErrorDescription,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ErrorMapping {
     /// The set of error categories and their descriptions
     pub error_categories: BTreeMap<u64, ErrorDescription>,
     /// The set of modules, and the module-specific errors
     pub module_error_maps: BTreeMap<ModuleId, BTreeMap<u64, ErrorDescription>>,
-}
-
-impl Default for ErrorMapping {
-    fn default() -> Self {
-        Self {
-            error_categories: BTreeMap::new(),
-            module_error_maps: BTreeMap::new(),
-        }
-    }
 }
 
 impl ErrorMapping {
@@ -87,16 +71,9 @@ impl ErrorMapping {
         file.write_all(&bytes).unwrap();
     }
 
-    pub fn get_explanation(&self, module: &ModuleId, output_code: u64) -> Option<ErrorContext> {
-        let category = output_code & 0xFFu64;
-        let reason_code = output_code >> 8;
-        self.error_categories.get(&category).and_then(|category| {
-            self.module_error_maps.get(module).and_then(|module_map| {
-                module_map.get(&reason_code).map(|reason| ErrorContext {
-                    category: category.clone(),
-                    reason: reason.clone(),
-                })
-            })
-        })
+    pub fn get_explanation(&self, module: &ModuleId, output_code: u64) -> Option<ErrorDescription> {
+        self.module_error_maps
+            .get(module)
+            .and_then(|module_map| module_map.get(&output_code).cloned())
     }
 }

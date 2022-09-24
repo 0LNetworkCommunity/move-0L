@@ -1,48 +1,21 @@
 ---
 id: contributing
-title: Contributing to Diem
+title: Contributing to Move
 ---
 
-Our goal is to make contributing to the Diem project easy and transparent.
-
-> **Note**: As the Diem Core project is currently an early-stage prototype, it
-> is undergoing rapid development. While we welcome contributions, before
-> making substantial contributions be sure to discuss them in the Discourse
-> forum to ensure that they fit into the project roadmap.
-
-## On Contributing
-
-### Diem Core
-
-To contribute to the Diem Core implementation, first start with the proper
+To contribute to the Move implementation, first start with the proper
 development copy.
 
 To get the development installation with all the necessary dependencies for
 linting, testing, and building the documentation, run the following:
 ```bash
-git clone https://github.com/diem/diem.git
-cd diem
-./scripts/dev_setup.sh
+git clone https://github.com/move-language/move.git
+cd move
+./scripts/dev_setup.sh # with optional [-t -b -p -y -d -n -v], see the script for more details
 cargo build
 cargo xtest
 ```
 
-## Our Development Process
-
-#### Code Style, Hints, and Testing
-
-Refer to our [Coding
-Guidelines](https://github.com/diem/diem/blob/main/documentation/coding_guidelines.md) for
-detailed guidance about how to contribute to the project.
-
-#### Documentation
-
-Diem's developer website is also open source (the code can be found in this
-[repository](https://github.com/diem/diem/developers.diem.com/website/)).  It is built using
-[Docusaurus](https://docusaurus.io/):
-
-If you know Markdown, you can already contribute! How to contribute can be found in the [website
-repo](https://github.com/diem/developers.diem.com/website/CONTRIBUTING.md).
 
 ## Developer Workflow
 
@@ -55,8 +28,7 @@ request workflow is as follows:
    documentation builds.
 4. Ensure all tests and lints pass on each and every commit that is part of
    your pull request. `cargo x lint && cargo xfmt && cargo xclippy --all-targets`
-5. If you haven't already, complete the Contributor License Agreement (CLA).
-6. Submit your pull request.
+5. Submit your pull request.
 
 ## Authoring Clean Commits
 
@@ -85,14 +57,6 @@ the area is an identifier for the general area of the code being modified, e.g.
 * [language] removing VerificationPass trait
 ```
 
-A non-exhaustive list of some other areas include:
-* consensus
-* mempool
-* network
-* storage
-* execution
-* vm
-
 Following the commit title (unless it alone is self-explanatory), there should
 be a single blank line followed by the commit body which includes more
 detailed, explanatory text as separate paragraph(s). It is recommended that the
@@ -113,7 +77,7 @@ the format "abbreviated sha1 (subject, date)", with the subject enclosed in a
 pair of double-quotes, like this:
 
 ```bash
-Commit 895b53510 ("[consensus] remove slice_patterns feature", 2019-07-18)
+Commit 895b53510 ("[vm] use slices instead of evecotrs", 2021-08-19)
 noticed that ...
 ```
 
@@ -165,18 +129,32 @@ every commit is able to be built and passes all lints and tests. So if your
 pull request includes multiple commits be sure that each and every commit is
 able to be built and passes all checks performed by CI.
 
-## Contributor License Agreement
-
-For pull request to be accepted by any Diem projects, a CLA must be signed.
-You will only need to do this once to work on any of Diem's open source
-projects. Individuals contributing on their own behalf can sign the [Individual
-CLA](https://github.com/diem/diem/blob/main/documentation/contributing/individual-cla.pdf).
-If you are contributing on behalf of your employer, please ask them to sign the
-[Corporate
-CLA](https://github.com/diem/diem/blob/main/documentation/contributing/corporate-cla.pdf).
 
 ## Issues
 
-Diem uses [GitHub issues](https://github.com/diem/diem/issues) to track
+Move uses [GitHub issues](https://github.com/move-language/move/issues) to track
 bugs. Please include necessary information and instructions to reproduce your
 issue.
+
+## Major feature requests
+
+Please begin by checking the following locations for duplicate requests:
+* [Approved feature proposals awaiting implementation](https://github.com/move-language/move/issues?q=is%3Aissue+is%3Aopen+label%3A%22accepted+feature+awaiting+implementation%22)
+* [Feature proposals under discussion](https://github.com/move-language/move/issues?q=is%3Aissue+is%3Aopen+label%3A%22proposed+feature+in+discussion%22)
+* [Language feature request graveyard](GRAVEYARD.md)
+
+If your feature is not in any of these locations, please add a new feature request using the following format:
+
+```
+Sponsor: your_github_id
+
+## Status: initial proposal
+
+## Rationale
+A detailed description of the problem the proposed feature seeks to solve. This should explain why the problem is important for smart contract programmers and why it is impossible (or unacceptably unpleasant) to solve with the existing language constructs. Examples are strongly recommended.
+
+## Design
+Explain the key decisions to be made in designing the feature. This can be organized as fully fleshed out design, a list of design options with pros and cons, or a list of questions to be answered. A proposed feature should have a very strong/clear rationale, but it is ok if many key design questions are open--the Move community and core contributors can help with this.
+```
+
+A Move core contributor will either add a `proposed_feature_to_be_discussed` tag and queue the feature for discussion at a future Move community meeting (and change the "Status" to reflect the meeting date), or will request changes that must be made to the issue before it is ready for discussion.

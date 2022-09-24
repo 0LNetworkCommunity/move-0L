@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! The obvious approach to abstracting a set of concrete paths is using a set of abstract paths.
@@ -393,8 +394,7 @@ impl<T: FootprintDomain> AccessPathTrie<T> {
     /// Retrieve the data associated with `local_index` in the trie. Returns `None` if there is no associated data
     pub fn get_local(&self, local_index: TempIndex, fun_env: &FunctionEnv) -> Option<&T> {
         self.get_local_node(local_index, fun_env)
-            .map(|n| n.data.as_ref())
-            .flatten()
+            .and_then(|n| n.data.as_ref())
     }
 
     /// Retrieve the node associated with `local_index` in the trie. Returns `None` if there is no associated node

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
@@ -106,6 +107,6 @@ impl LeftScreen for BytecodeViewer<'_> {
     }
 
     fn backing_string(&self) -> String {
-        self.lines.join("\n").replace("\t", "    ")
+        self.lines.join("\n").replace('\t', "    ")
     }
 }

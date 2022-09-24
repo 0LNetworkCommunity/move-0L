@@ -1,7 +1,9 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 use crate::{sandbox::utils::OnDiskStateView, DEFAULT_BUILD_DIR};
 use anyhow::Result;
+use move_command_line_common::env::get_bytecode_version_from_env;
 use move_package::{compilation::compiled_package::CompiledPackage, BuildConfig};
 use std::path::{Path, PathBuf};
 
@@ -13,7 +15,8 @@ pub struct PackageContext {
 }
 
 impl PackageContext {
-    pub fn new(path: &Path, build_config: &BuildConfig) -> Result<Self> {
+    pub fn new(path: &Option<PathBuf>, build_config: &BuildConfig) -> Result<Self> {
+        let path = path.as_deref().unwrap_or_else(|| Path::new("."));
         let build_dir = build_config
             .install_dir
             .as_ref()
@@ -32,26 +35,25 @@ impl PackageContext {
     /// to be run before every command that needs a state view, i.e., `publish`, `run`,
     /// `view`, and `doctor`.
     pub fn prepare_state(&self, storage_dir: &Path) -> Result<OnDiskStateView> {
+        let bytecode_version = get_bytecode_version_from_env();
         let state = OnDiskStateView::create(self.build_dir.as_path(), storage_dir)?;
 
         // preload the storage with library modules (if such modules do not exist yet)
         let package = self.package();
-        let new_modules: Vec<_> = package
-            .dependencies
+        let new_modules = package
+            .deps_compiled_units
             .iter()
-            .flat_map(|dep| {
-                dep.compiled_modules()
-                    .iter_modules_owned()
-                    .into_iter()
-                    .filter(|m| !state.has_module(&m.self_id()))
+            .map(|(_, unit)| match &unit.unit {
+                move_compiler::compiled_unit::CompiledUnitEnum::Module(m) => &m.module,
+                _ => unreachable!(),
             })
-            .collect();
+            .filter(|m| !state.has_module(&m.self_id()));
 
         let mut serialized_modules = vec![];
         for module in new_modules {
             let self_id = module.self_id();
             let mut module_bytes = vec![];
-            module.serialize(&mut module_bytes)?;
+            module.serialize_for_version(bytecode_version, &mut module_bytes)?;
             serialized_modules.push((self_id, module_bytes));
         }
         state.save_modules(&serialized_modules)?;
@@ -66,6 +68,6 @@ impl PackageContext {
 
 impl Default for PackageContext {
     fn default() -> Self {
-        Self::new(&std::env::current_dir().unwrap(), &BuildConfig::default()).unwrap()
+        Self::new(&None, &BuildConfig::default()).unwrap()
     }
 }

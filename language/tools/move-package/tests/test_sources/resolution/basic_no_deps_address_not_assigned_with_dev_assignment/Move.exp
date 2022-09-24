@@ -10,6 +10,8 @@ ResolutionGraph {
         ),
         force_recompilation: false,
         additional_named_addresses: {},
+        architecture: None,
+        fetch_deps_only: false,
     },
     root_package: SourceManifest {
         package: PackageInfo {
@@ -21,6 +23,7 @@ ResolutionGraph {
             ),
             authors: [],
             license: None,
+            custom_properties: {},
         },
         addresses: Some(
             {
@@ -52,6 +55,7 @@ ResolutionGraph {
                     ),
                     authors: [],
                     license: None,
+                    custom_properties: {},
                 },
                 addresses: Some(
                     {

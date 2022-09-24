@@ -3,7 +3,7 @@ name = "move-stackless-bytecode-interpreter"
 version = "0.1.0"
 authors = ["Diem Association <opensource@diem.com>"]
 publish = false
-edition = "2018"
+edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
@@ -13,7 +13,6 @@ bytecode-interpreter-crypto = { path = "crypto" }
 move-binary-format = { path = "../../move-binary-format" }
 move-core-types = { path = "../../move-core/types" }
 move-model = { path = "../../move-model" }
-move-vm-runtime = { path = "../../move-vm/runtime" }
 
 # external dependencies
 anyhow = "1.0.52"
@@ -21,8 +20,7 @@ codespan-reporting = "0.11.1"
 itertools = "0.10.0"
 num = "0.4.0"
 serde = { version = "1.0.124", features = ["derive"] }
-structopt = "0.3.21"
-workspace-hack = { version = "0.1", path = "../../../crates/workspace-hack" }
+clap = { version = "3.1.8", features = ["derive"] }
 
 [dev-dependencies]
 datatest-stable = "0.1.1"

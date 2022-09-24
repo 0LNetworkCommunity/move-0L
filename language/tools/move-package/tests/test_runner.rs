@@ -1,13 +1,23 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use move_command_line_common::testing::{format_diff, read_env_update_baseline, EXP_EXT};
+use anyhow::bail;
+use move_command_line_common::testing::{
+    add_update_baseline_fix, format_diff, read_env_update_baseline, EXP_EXT,
+};
 use move_package::{
     compilation::{build_plan::BuildPlan, model_builder::ModelBuilder},
+    package_hooks,
+    package_hooks::PackageHooks,
     resolution::resolution_graph as RG,
-    source_package::{manifest_parser as MP, parsed_manifest::PackageDigest},
+    source_package::{
+        manifest_parser as MP,
+        parsed_manifest::{CustomDepInfo, PackageDigest},
+    },
     BuildConfig, ModelConfig,
 };
+use move_symbol_pool::Symbol;
 use std::{
     ffi::OsStr,
     fs,
@@ -19,6 +29,7 @@ const COMPILE_EXT: &str = "compile";
 const MODEL_EXT: &str = "model";
 
 pub fn run_test(path: &Path) -> datatest_stable::Result<()> {
+    package_hooks::register_package_hooks(Box::new(TestHooks()));
     let update_baseline = read_env_update_baseline();
     if path
         .components()
@@ -63,11 +74,11 @@ pub fn run_test(path: &Path) -> datatest_stable::Result<()> {
                 .and_then(|bp| bp.compile(&mut Vec::new()))
             {
                 Ok(mut pkg) => {
-                    pkg.0.compiled_package_info.source_digest =
+                    pkg.compiled_package_info.source_digest =
                         Some(PackageDigest::from("ELIDED_FOR_TEST"));
-                    pkg.0.compiled_package_info.build_flags.install_dir =
+                    pkg.compiled_package_info.build_flags.install_dir =
                         Some(PathBuf::from("ELIDED_FOR_TEST"));
-                    format!("{:#?}\n", pkg.0.compiled_package_info)
+                    format!("{:#?}\n", pkg.compiled_package_info)
                 }
                 Err(error) => format!("{:#}\n", error),
             },
@@ -103,12 +114,12 @@ pub fn run_test(path: &Path) -> datatest_stable::Result<()> {
     if exp_exists {
         let expected = fs::read_to_string(&exp_path)?;
         if expected != output {
-            return Err(anyhow::format_err!(
+            let msg = format!(
                 "Expected outputs differ for {:?}:\n{}",
                 exp_path,
                 format_diff(expected, output)
-            )
-            .into());
+            );
+            return Err(anyhow::format_err!(add_update_baseline_fix(msg)).into());
         }
     } else {
         return Err(anyhow::format_err!(
@@ -119,6 +130,33 @@ pub fn run_test(path: &Path) -> datatest_stable::Result<()> {
         .into());
     }
     Ok(())
+}
+
+/// Some dummy hooks for testing the hook mechanism
+struct TestHooks();
+
+impl PackageHooks for TestHooks {
+    fn custom_package_info_fields(&self) -> Vec<String> {
+        vec!["test_hooks_field".to_owned()]
+    }
+
+    fn custom_dependency_key(&self) -> Option<String> {
+        Some("custom".to_owned())
+    }
+
+    fn resolve_custom_dependency(
+        &self,
+        dep_name: Symbol,
+        info: &CustomDepInfo,
+    ) -> anyhow::Result<()> {
+        bail!(
+            "TestHooks resolve dep {} = {} {} {}",
+            dep_name,
+            info.node_url,
+            info.package_name,
+            info.package_address
+        )
+    }
 }
 
 datatest_stable::harness!(run_test, "tests/test_sources", r".*\.toml$");

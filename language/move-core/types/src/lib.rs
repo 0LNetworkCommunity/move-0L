@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Core types for Move.
@@ -7,9 +8,10 @@ pub mod abi;
 pub mod account_address;
 pub mod effects;
 pub mod errmap;
-pub mod gas_schedule;
+pub mod gas_algebra;
 pub mod identifier;
 pub mod language_storage;
+pub mod metadata;
 pub mod move_resource;
 pub mod parser;
 #[cfg(any(test, feature = "fuzzing"))]

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{borrow_graph::BorrowGraph, error::VMError};
@@ -18,14 +19,14 @@ use std::{
 
 /// The BorrowState denotes whether a local is `Available` or
 /// has been moved and is `Unavailable`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BorrowState {
     Available,
     Unavailable,
 }
 
 /// This models a value on the stack or in the locals
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbstractValue {
     /// Represents the type of the value
     pub token: SignatureToken,
@@ -35,7 +36,7 @@ pub struct AbstractValue {
 }
 
 /// This models the mutability of a reference
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mutability {
     /// Represents a mutable reference
     Mutable,
@@ -51,7 +52,7 @@ pub enum Mutability {
 impl AbstractValue {
     /// Create a new primitive `AbstractValue` given its type; the kind will be `Copyable`
     pub fn new_primitive(token: SignatureToken) -> AbstractValue {
-        checked_precondition!(
+        assert!(
             match token {
                 SignatureToken::Struct(_)
                 | SignatureToken::StructInstantiation(_, _)
@@ -76,7 +77,7 @@ impl AbstractValue {
 
     /// Create a new reference `AbstractValue` given its type and kind
     pub fn new_reference(token: SignatureToken, abilities: AbilitySet) -> AbstractValue {
-        checked_precondition!(
+        assert!(
             matches!(
                 token,
                 SignatureToken::Reference(_) | SignatureToken::MutableReference(_)
@@ -88,7 +89,7 @@ impl AbstractValue {
 
     /// Create a new struct `AbstractValue` given its type and kind
     pub fn new_struct(token: SignatureToken, abilities: AbilitySet) -> AbstractValue {
-        checked_precondition!(
+        assert!(
             matches!(token, SignatureToken::Struct(_)),
             "AbstractValue::new_struct must be applied with a struct type"
         );
@@ -117,7 +118,7 @@ impl AbstractValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallGraph {
     calls: HashMap<FunctionHandleIndex, HashSet<FunctionHandleIndex>>,
     max_function_handle_index: usize,
@@ -443,6 +444,7 @@ pub struct AbstractState {
 
     /// This graph stores borrow information needed to ensure that bytecode instructions
     /// are memory safe
+    #[allow(dead_code)]
     borrow_graph: BorrowGraph,
 
     pub call_graph: CallGraph,
@@ -512,7 +514,7 @@ impl AbstractState {
     pub fn stack_push(&mut self, item: AbstractValue) {
         // Programs that are large enough to exceed this bound
         // will not be generated
-        assume!(self.stack.len() < usize::max_value());
+        debug_assert!(self.stack.len() < usize::max_value());
         self.stack.push(item);
     }
 
@@ -522,7 +524,7 @@ impl AbstractState {
         if let Some(abstract_value) = self.register_move() {
             // Programs that are large enough to exceed this bound
             // will not be generated
-            assume!(self.stack.len() < usize::max_value());
+            debug_assert!(self.stack.len() < usize::max_value());
             self.stack.push(abstract_value);
             Ok(())
         } else {

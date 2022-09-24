@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::compiler::{as_module, compile_units};
@@ -12,7 +13,7 @@ use move_core_types::{
 };
 use move_vm_runtime::move_vm::MoveVM;
 use move_vm_test_utils::InMemoryStorage;
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_types::gas::UnmeteredGasMeter;
 
 const TEST_ADDR: AccountAddress = AccountAddress::new([42; AccountAddress::LENGTH]);
 
@@ -59,14 +60,19 @@ fn run(
     let mut sess = vm.new_session(&storage);
 
     let fun_name = Identifier::new("foo").unwrap();
-    let mut gas_status = GasStatus::new_unmetered();
 
     let args: Vec<_> = args
         .into_iter()
         .map(|val| val.simple_serialize().unwrap())
         .collect();
 
-    sess.execute_function(&module_id, &fun_name, ty_args, args, &mut gas_status)?;
+    sess.execute_function_bypass_visibility(
+        &module_id,
+        &fun_name,
+        ty_args,
+        args,
+        &mut UnmeteredGasMeter,
+    )?;
 
     Ok(())
 }
@@ -181,12 +187,8 @@ fn expected_u64_got_bool() {
 }
 
 #[test]
-fn invalid_param_type_u64_ref() {
-    expect_err(
-        &["&u64"],
-        vec![MoveValue::U64(0)],
-        StatusCode::INVALID_PARAM_TYPE_FOR_DESERIALIZATION,
-    )
+fn param_type_u64_ref() {
+    expect_ok(&["&u64"], vec![MoveValue::U64(0)])
 }
 
 #[test]
@@ -249,13 +251,7 @@ fn expected_T__T_got_bool__u64() {
 #[test]
 #[allow(non_snake_case)]
 fn expected_T__T_ref_got_u64__u64() {
-    expect_err_generic(
-        &["T"],
-        &["&T"],
-        vec![TypeTag::U64],
-        vec![MoveValue::U64(0)],
-        StatusCode::INVALID_PARAM_TYPE_FOR_DESERIALIZATION,
-    )
+    expect_ok_generic(&["T"], &["&T"], vec![TypeTag::U64], vec![MoveValue::U64(0)])
 }
 
 #[test]

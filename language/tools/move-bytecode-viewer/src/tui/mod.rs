@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
@@ -7,16 +8,12 @@ pub mod text_builder;
 pub mod tui_interface;
 
 use crate::tui::tui_interface::TUIInterface;
-use std::{
-    error::Error,
-    io::{self, Stdin, Write},
-};
-use termion::{
-    event::Key,
-    input::{Keys, TermRead},
-};
+use std::{error::Error, io::Write};
+
+use crossterm::event::{self, Event, KeyCode as Key, KeyEvent};
+
 use tui::{
-    backend::TermionBackend,
+    backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::Style,
     widgets::{Block, Borders, Paragraph},
@@ -27,21 +24,18 @@ pub struct TUI<Interface: TUIInterface> {
     current_line_number: u16,
     current_column: u16,
     interface: Interface,
-    keys: Keys<Stdin>,
 }
 
 impl<Interface: TUIInterface> TUI<Interface> {
     pub fn new(interface: Interface) -> Self {
-        let keys = io::stdin().keys();
         Self {
             current_line_number: 0,
             current_column: 0,
             interface,
-            keys,
         }
     }
 
-    pub fn redraw<W: Write>(&mut self, f: &mut Frame<TermionBackend<W>>) {
+    pub fn redraw<W: Write>(&mut self, f: &mut Frame<CrosstermBackend<W>>) {
         // Create a split window, each pane using 50% of the screen
         let window = Layout::default()
             .direction(Direction::Horizontal)
@@ -105,8 +99,8 @@ impl<Interface: TUIInterface> TUI<Interface> {
     /// Left, Right => move the cursor to the previous (resp. next) character on the current line
     /// ESC, q => exit
     pub fn handle_input(&mut self) -> Result<bool, Box<dyn Error>> {
-        if let Some(key) = self.keys.next() {
-            match key.unwrap() {
+        if let Event::Key(KeyEvent { code: key, .. }) = event::read()? {
+            match key {
                 // Exit
                 Key::Esc | Key::Char('q') => {
                     return Ok(true);

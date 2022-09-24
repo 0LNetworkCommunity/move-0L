@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 pub const KEYWORDS: &[&str] = &[
@@ -63,6 +64,8 @@ pub const CONTEXTUAL_KEYWORDS: &[&str] = &[
     "where",
     "with",
 ];
+
+pub const PRIMITIVE_TYPES: &[&str] = &["u8", "u64", "u128", "bool", "vector"];
 
 pub const BUILTINS: &[&str] = &[
     "assert",

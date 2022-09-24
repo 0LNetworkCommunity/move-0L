@@ -7,7 +7,7 @@ repository = "https://github.com/diem/diem"
 homepage = "https://diem.com"
 license = "Apache-2.0"
 publish = false
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 anyhow = "1.0.52"
@@ -16,7 +16,6 @@ move-ir-types = { path = "../../../move-ir/types" }
 move-core-types = { path = "../../../move-core/types" }
 move-symbol-pool = { path = "../../../move-symbol-pool" }
 move-command-line-common = { path = "../../../move-command-line-common" }
-workspace-hack = { version = "0.1", path = "../../../../crates/workspace-hack" }
 
 [features]
 default = []

@@ -1,13 +1,14 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{context::XContext, Result};
 use anyhow::anyhow;
-use structopt::StructOpt;
+use clap::Parser;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct Args {
-    #[structopt(long)]
+    #[clap(long)]
     /// Run in 'check' mode. Exits with 0 if all tools installed. Exits with 1 and if not, printing failed
     check: bool,
 }

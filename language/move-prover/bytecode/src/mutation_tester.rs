@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Transformation which mutates code for mutation testing in various ways
@@ -119,12 +120,8 @@ impl FunctionTargetProcessor for MutationTester {
                         (*dests).clone(),
                     );
                     let mv = m.add_sub;
-                    let result: usize;
-                    if mv > 0 {
-                        result = mv - 1;
-                    } else {
-                        result = mv;
-                    }
+
+                    let result = if mv > 0 { mv - 1 } else { mv };
                     let mm = MutationManager {
                         add_sub: result,
                         ..*m
@@ -140,12 +137,8 @@ impl FunctionTargetProcessor for MutationTester {
                         (*dests).clone(),
                     );
                     let mv = m.sub_add;
-                    let result: usize;
-                    if mv > 0 {
-                        result = mv - 1;
-                    } else {
-                        result = mv;
-                    }
+
+                    let result = if mv > 0 { mv - 1 } else { mv };
                     let mm = MutationManager {
                         sub_add: result,
                         ..*m
@@ -161,12 +154,8 @@ impl FunctionTargetProcessor for MutationTester {
                         (*dests).clone(),
                     );
                     let mv = m.mul_div;
-                    let result: usize;
-                    if mv > 0 {
-                        result = mv - 1;
-                    } else {
-                        result = mv;
-                    }
+
+                    let result = if mv > 0 { mv - 1 } else { mv };
                     let mm = MutationManager {
                         mul_div: result,
                         ..*m
@@ -181,13 +170,8 @@ impl FunctionTargetProcessor for MutationTester {
                         (*srcs).clone(),
                         (*dests).clone(),
                     );
-                    let mv = m.div_mul;
-                    let result: usize;
-                    if mv > 0 {
-                        result = mv - 1;
-                    } else {
-                        result = mv;
-                    }
+                    let mv = m.mul_div;
+                    let result = if mv > 0 { mv - 1 } else { mv };
                     let mm = MutationManager {
                         div_mul: result,
                         ..*m

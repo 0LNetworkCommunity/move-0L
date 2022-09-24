@@ -1,7 +1,9 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{bail, format_err, Error, Result};
+use clap::Parser;
 use colored::*;
 use move_binary_format::{
     binary_views::BinaryIndexedView,
@@ -21,25 +23,24 @@ use move_compiler::compiled_unit::{CompiledUnit, NamedCompiledModule, NamedCompi
 use move_core_types::identifier::IdentStr;
 use move_coverage::coverage_map::{ExecCoverageMap, FunctionCoverage};
 use move_ir_types::location::Loc;
-use structopt::StructOpt;
 
 /// Holds the various options that we support while disassembling code.
-#[derive(Debug, Default, StructOpt)]
+#[derive(Debug, Default, Parser)]
 pub struct DisassemblerOptions {
     /// Only print non-private functions
-    #[structopt(long = "only-public")]
+    #[clap(long = "only-public")]
     pub only_externally_visible: bool,
 
     /// Print the bytecode for the instructions within the function.
-    #[structopt(long = "print-code")]
+    #[clap(long = "print-code")]
     pub print_code: bool,
 
     /// Print the basic blocks of the bytecode.
-    #[structopt(long = "print-basic-blocks")]
+    #[clap(long = "print-basic-blocks")]
     pub print_basic_blocks: bool,
 
     /// Print the locals inside each function body.
-    #[structopt(long = "print-locals")]
+    #[clap(long = "print-locals")]
     pub print_locals: bool,
 }
 
@@ -265,18 +266,13 @@ impl<'a> Disassembler<'a> {
         &self,
         struct_idx: StructDefinitionIndex,
         signature: &Signature,
+        type_param_context: &[SourceName],
     ) -> Result<(String, String)> {
         let struct_definition = self.get_struct_def(struct_idx)?;
-        let struct_source_map = self
-            .source_mapper
-            .source_map
-            .get_struct_source_map(struct_idx)?;
         let type_arguments = signature
             .0
             .iter()
-            .map(|sig_tok| {
-                self.disassemble_sig_tok(sig_tok.clone(), &struct_source_map.type_parameters)
-            })
+            .map(|sig_tok| self.disassemble_sig_tok(sig_tok.clone(), type_param_context))
             .collect::<Result<Vec<String>>>()?;
 
         let struct_handle = self
@@ -460,7 +456,7 @@ impl<'a> Disassembler<'a> {
             Bytecode::LdConst(idx) => {
                 let constant = self.source_mapper.bytecode.constant_at(*idx);
                 Ok(format!(
-                    "LdAddr[{}]({:?}: {:?})",
+                    "LdConst[{}]({:?}: {:?})",
                     idx, &constant.type_, &constant.data
                 ))
             }
@@ -554,7 +550,11 @@ impl<'a> Disassembler<'a> {
                 ))
             }
             Bytecode::Pack(struct_idx) => {
-                let (name, ty_params) = self.struct_type_info(*struct_idx, &Signature(vec![]))?;
+                let (name, ty_params) = self.struct_type_info(
+                    *struct_idx,
+                    &Signature(vec![]),
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!("Pack[{}]({}{})", struct_idx, name, ty_params))
             }
             Bytecode::PackGeneric(struct_idx) => {
@@ -566,14 +566,22 @@ impl<'a> Disassembler<'a> {
                     .source_mapper
                     .bytecode
                     .signature_at(struct_inst.type_parameters);
-                let (name, ty_params) = self.struct_type_info(struct_inst.def, type_params)?;
+                let (name, ty_params) = self.struct_type_info(
+                    struct_inst.def,
+                    type_params,
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "PackGeneric[{}]({}{})",
                     struct_idx, name, ty_params
                 ))
             }
             Bytecode::Unpack(struct_idx) => {
-                let (name, ty_params) = self.struct_type_info(*struct_idx, &Signature(vec![]))?;
+                let (name, ty_params) = self.struct_type_info(
+                    *struct_idx,
+                    &Signature(vec![]),
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!("Unpack[{}]({}{})", struct_idx, name, ty_params))
             }
             Bytecode::UnpackGeneric(struct_idx) => {
@@ -585,14 +593,22 @@ impl<'a> Disassembler<'a> {
                     .source_mapper
                     .bytecode
                     .signature_at(struct_inst.type_parameters);
-                let (name, ty_params) = self.struct_type_info(struct_inst.def, type_params)?;
+                let (name, ty_params) = self.struct_type_info(
+                    struct_inst.def,
+                    type_params,
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "UnpackGeneric[{}]({}{})",
                     struct_idx, name, ty_params
                 ))
             }
             Bytecode::Exists(struct_idx) => {
-                let (name, ty_params) = self.struct_type_info(*struct_idx, &Signature(vec![]))?;
+                let (name, ty_params) = self.struct_type_info(
+                    *struct_idx,
+                    &Signature(vec![]),
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!("Exists[{}]({}{})", struct_idx, name, ty_params))
             }
             Bytecode::ExistsGeneric(struct_idx) => {
@@ -604,14 +620,22 @@ impl<'a> Disassembler<'a> {
                     .source_mapper
                     .bytecode
                     .signature_at(struct_inst.type_parameters);
-                let (name, ty_params) = self.struct_type_info(struct_inst.def, type_params)?;
+                let (name, ty_params) = self.struct_type_info(
+                    struct_inst.def,
+                    type_params,
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "ExistsGeneric[{}]({}{})",
                     struct_idx, name, ty_params
                 ))
             }
             Bytecode::MutBorrowGlobal(struct_idx) => {
-                let (name, ty_params) = self.struct_type_info(*struct_idx, &Signature(vec![]))?;
+                let (name, ty_params) = self.struct_type_info(
+                    *struct_idx,
+                    &Signature(vec![]),
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "MutBorrowGlobal[{}]({}{})",
                     struct_idx, name, ty_params
@@ -626,14 +650,22 @@ impl<'a> Disassembler<'a> {
                     .source_mapper
                     .bytecode
                     .signature_at(struct_inst.type_parameters);
-                let (name, ty_params) = self.struct_type_info(struct_inst.def, type_params)?;
+                let (name, ty_params) = self.struct_type_info(
+                    struct_inst.def,
+                    type_params,
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "MutBorrowGlobalGeneric[{}]({}{})",
                     struct_idx, name, ty_params
                 ))
             }
             Bytecode::ImmBorrowGlobal(struct_idx) => {
-                let (name, ty_params) = self.struct_type_info(*struct_idx, &Signature(vec![]))?;
+                let (name, ty_params) = self.struct_type_info(
+                    *struct_idx,
+                    &Signature(vec![]),
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "ImmBorrowGlobal[{}]({}{})",
                     struct_idx, name, ty_params
@@ -648,14 +680,22 @@ impl<'a> Disassembler<'a> {
                     .source_mapper
                     .bytecode
                     .signature_at(struct_inst.type_parameters);
-                let (name, ty_params) = self.struct_type_info(struct_inst.def, type_params)?;
+                let (name, ty_params) = self.struct_type_info(
+                    struct_inst.def,
+                    type_params,
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "ImmBorrowGlobalGeneric[{}]({}{})",
                     struct_idx, name, ty_params
                 ))
             }
             Bytecode::MoveFrom(struct_idx) => {
-                let (name, ty_params) = self.struct_type_info(*struct_idx, &Signature(vec![]))?;
+                let (name, ty_params) = self.struct_type_info(
+                    *struct_idx,
+                    &Signature(vec![]),
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!("MoveFrom[{}]({}{})", struct_idx, name, ty_params))
             }
             Bytecode::MoveFromGeneric(struct_idx) => {
@@ -667,14 +707,22 @@ impl<'a> Disassembler<'a> {
                     .source_mapper
                     .bytecode
                     .signature_at(struct_inst.type_parameters);
-                let (name, ty_params) = self.struct_type_info(struct_inst.def, type_params)?;
+                let (name, ty_params) = self.struct_type_info(
+                    struct_inst.def,
+                    type_params,
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "MoveFromGeneric[{}]({}{})",
                     struct_idx, name, ty_params
                 ))
             }
             Bytecode::MoveTo(struct_idx) => {
-                let (name, ty_params) = self.struct_type_info(*struct_idx, &Signature(vec![]))?;
+                let (name, ty_params) = self.struct_type_info(
+                    *struct_idx,
+                    &Signature(vec![]),
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!("MoveTo[{}]({}{})", struct_idx, name, ty_params))
             }
             Bytecode::MoveToGeneric(struct_idx) => {
@@ -686,7 +734,11 @@ impl<'a> Disassembler<'a> {
                     .source_mapper
                     .bytecode
                     .signature_at(struct_inst.type_parameters);
-                let (name, ty_params) = self.struct_type_info(struct_inst.def, type_params)?;
+                let (name, ty_params) = self.struct_type_info(
+                    struct_inst.def,
+                    type_params,
+                    &function_source_map.type_parameters,
+                )?;
                 Ok(format!(
                     "MoveToGeneric[{}]({}{})",
                     struct_idx, name, ty_params
@@ -911,7 +963,7 @@ impl<'a> Disassembler<'a> {
             .map(|(local_idx, (name, _))| {
                 let ty =
                     self.type_for_local(parameter_len + local_idx, signature, function_source_map)?;
-                Ok(format!("{}: {}", name.to_string(), ty))
+                Ok(format!("{}: {}", name, ty))
             })
             .collect::<Result<Vec<String>>>()?;
         Ok(locals_names_tys)
@@ -932,6 +984,18 @@ impl<'a> Disassembler<'a> {
         parameters: SignatureIndex,
         code: Option<&CodeUnit>,
     ) -> Result<String> {
+        debug_assert_eq!(
+            function_source_map.parameters.len(),
+            self.source_mapper.bytecode.signature_at(parameters).len(),
+            "Arity mismatch between function source map and bytecode for function {}",
+            name
+        );
+
+        let entry_modifier = if function.map(|(f, _)| f.is_entry).unwrap_or(false) {
+            "entry "
+        } else {
+            ""
+        };
         let visibility_modifier = match function {
             Some(function) => match function.0.visibility {
                 Visibility::Private => {
@@ -941,7 +1005,6 @@ impl<'a> Disassembler<'a> {
                         ""
                     }
                 }
-                Visibility::Script => "public(script) ",
                 Visibility::Friend => "public(friend) ",
                 Visibility::Public => "public ",
             },
@@ -963,7 +1026,7 @@ impl<'a> Disassembler<'a> {
             .signature_at(parameters)
             .0
             .iter()
-            .zip(function_source_map.locals.iter())
+            .zip(function_source_map.parameters.iter())
             .map(|(tok, (name, _))| {
                 Ok(format!(
                     "{}: {}",
@@ -1003,14 +1066,9 @@ impl<'a> Disassembler<'a> {
         Ok(self.format_function_coverage(
             name,
             format!(
-                "{native_modifier}{visibility_modifier}{name}{ty_params}({params}){ret_type}{body}",
-                native_modifier = native_modifier,
-                visibility_modifier = visibility_modifier,
-                name = name,
-                ty_params = ty_params,
+                "{entry_modifier}{native_modifier}{visibility_modifier}{name}{ty_params}({params}){ret_type}{body}",
                 params = &params.join(", "),
                 ret_type = Self::format_ret_type(&ret_type),
-                body = body,
             ),
         ))
     }
@@ -1076,7 +1134,7 @@ impl<'a> Disassembler<'a> {
                 .map(|(name, ty)| {
                     let ty_str =
                         self.disassemble_sig_tok(ty.0.clone(), &struct_source_map.type_parameters)?;
-                    Ok(format!("{}: {}", name.to_string(), ty_str))
+                    Ok(format!("{}: {}", name, ty_str))
                 })
                 .collect::<Result<Vec<String>>>()?,
         };
@@ -1101,8 +1159,7 @@ impl<'a> Disassembler<'a> {
 
     pub fn disassemble(&self) -> Result<String> {
         let name_opt = self.source_mapper.source_map.module_name_opt.as_ref();
-        let name =
-            name_opt.map(|(addr, n)| format!("{}.{}", addr.short_str_lossless(), n.to_string()));
+        let name = name_opt.map(|(addr, n)| format!("{}.{}", addr.short_str_lossless(), n));
         let version = format!("{}", self.source_mapper.bytecode.version());
         let header = match name {
             Some(s) => format!("module {}", s),

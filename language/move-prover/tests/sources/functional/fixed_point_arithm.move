@@ -1,9 +1,12 @@
-// separate_baseline: cvc4
-// TODO(cvc4): cvc4 currently produces false positives.
+// exclude_for: cvc5
 // separate_baseline: simplify
+// (There used to be a separate baseline: cvc5, but now it's excluded)
+// TODO(cvc5): cvc5 goes into infinite loop because of recursive function
+// $pow (used in shifts) in prelude.bpl.
+// TODO(cvc4): cvc4 currently produces false positives.
 module 0x42::FixedPointArithmetic {
 
-    use Std::FixedPoint32::{Self, FixedPoint32};
+    use std::fixed_point32::{Self, FixedPoint32};
     spec module {
        pragma verify = true;
     }
@@ -13,7 +16,7 @@ module 0x42::FixedPointArithmetic {
     // -------------------------------
 
     fun multiply_0_x(x: FixedPoint32): u64 {
-        FixedPoint32::multiply_u64(0, x)
+        fixed_point32::multiply_u64(0, x)
     }
     spec multiply_0_x {
         aborts_if false; // proved
@@ -21,7 +24,7 @@ module 0x42::FixedPointArithmetic {
     }
 
     fun multiply_0_x_incorrect(x: FixedPoint32): u64 {
-        FixedPoint32::multiply_u64(0, x)
+        fixed_point32::multiply_u64(0, x)
     }
     spec multiply_0_x_incorrect {
         aborts_if false; // proved
@@ -29,7 +32,7 @@ module 0x42::FixedPointArithmetic {
     }
 
     fun multiply_x_0(x: u64): u64 {
-        FixedPoint32::multiply_u64(x, FixedPoint32::create_from_raw_value(0))
+        fixed_point32::multiply_u64(x, fixed_point32::create_from_raw_value(0))
     }
     spec multiply_x_0 {
         aborts_if false; // proved
@@ -37,7 +40,7 @@ module 0x42::FixedPointArithmetic {
     }
 
     fun multiply_x_0_incorrect(x: u64): u64 {
-        FixedPoint32::multiply_u64(x, FixedPoint32::create_from_raw_value(0))
+        fixed_point32::multiply_u64(x, fixed_point32::create_from_raw_value(0))
     }
     spec multiply_x_0_incorrect {
         aborts_if false; // proved
@@ -50,7 +53,7 @@ module 0x42::FixedPointArithmetic {
     // -----------------------------------
 
     fun multiply_1_x(x: FixedPoint32): u64 {
-        FixedPoint32::multiply_u64(1, x)
+        fixed_point32::multiply_u64(1, x)
     }
     spec multiply_1_x {
         aborts_if false; // proved
@@ -59,7 +62,7 @@ module 0x42::FixedPointArithmetic {
     }
 
     fun multiply_1_x_incorrect(x: FixedPoint32): u64 {
-        FixedPoint32::multiply_u64(1, x)
+        fixed_point32::multiply_u64(1, x)
     }
     spec multiply_1_x_incorrect {
         aborts_if false; // proved
@@ -68,7 +71,7 @@ module 0x42::FixedPointArithmetic {
     }
 
     fun multiply_x_1(x: u64): u64 {
-        FixedPoint32::multiply_u64(x, FixedPoint32::create_from_rational(1,1))
+        fixed_point32::multiply_u64(x, fixed_point32::create_from_rational(1,1))
     }
     spec multiply_x_1 {
         aborts_if false; // proved
@@ -76,7 +79,7 @@ module 0x42::FixedPointArithmetic {
     }
 
     fun multiply_x_1_incorrect(x: u64): u64 {
-        FixedPoint32::multiply_u64(x, FixedPoint32::create_from_rational(1,1))
+        fixed_point32::multiply_u64(x, fixed_point32::create_from_rational(1,1))
     }
     spec multiply_x_1_incorrect {
         aborts_if false; // proved
@@ -90,18 +93,18 @@ module 0x42::FixedPointArithmetic {
 
     // Returns the evaluation of ((x * y) / y) in the fixed-point arithmetic
     fun mul_div(x: u64, y: FixedPoint32): u64 {
-        let y_raw_val = FixedPoint32::get_raw_value(y);
-        let z = FixedPoint32::multiply_u64(x, FixedPoint32::create_from_raw_value(y_raw_val));
-        FixedPoint32::divide_u64(z, FixedPoint32::create_from_raw_value(y_raw_val))
+        let y_raw_val = fixed_point32::get_raw_value(y);
+        let z = fixed_point32::multiply_u64(x, fixed_point32::create_from_raw_value(y_raw_val));
+        fixed_point32::divide_u64(z, fixed_point32::create_from_raw_value(y_raw_val))
     }
     spec mul_div {
         ensures result <= x; // proved
     }
 
     fun mul_div_incorrect(x: u64, y: FixedPoint32): u64 {
-        let y_raw_val = FixedPoint32::get_raw_value(y);
-        let z = FixedPoint32::multiply_u64(x, FixedPoint32::create_from_raw_value(y_raw_val));
-        FixedPoint32::divide_u64(z, FixedPoint32::create_from_raw_value(y_raw_val))
+        let y_raw_val = fixed_point32::get_raw_value(y);
+        let z = fixed_point32::multiply_u64(x, fixed_point32::create_from_raw_value(y_raw_val));
+        fixed_point32::divide_u64(z, fixed_point32::create_from_raw_value(y_raw_val))
     }
     spec mul_div_incorrect {
         ensures result >= x; // disproved
@@ -112,18 +115,18 @@ module 0x42::FixedPointArithmetic {
 
     // Returns the evaluation of ((x / y) * y) in the fixed-point arithmetic
     fun div_mul(x: u64, y: FixedPoint32): u64 {
-        let y_raw_val = FixedPoint32::get_raw_value(y);
-        let z = FixedPoint32::divide_u64(x, FixedPoint32::create_from_raw_value(y_raw_val));
-        FixedPoint32::multiply_u64(z, FixedPoint32::create_from_raw_value(y_raw_val))
+        let y_raw_val = fixed_point32::get_raw_value(y);
+        let z = fixed_point32::divide_u64(x, fixed_point32::create_from_raw_value(y_raw_val));
+        fixed_point32::multiply_u64(z, fixed_point32::create_from_raw_value(y_raw_val))
     }
     spec div_mul {
         ensures result <= x; // proved
     }
 
     fun div_mul_incorrect(x: u64, y: FixedPoint32): u64 {
-        let y_raw_val = FixedPoint32::get_raw_value(y);
-        let z = FixedPoint32::divide_u64(x, FixedPoint32::create_from_raw_value(y_raw_val));
-        FixedPoint32::multiply_u64(z, FixedPoint32::create_from_raw_value(y_raw_val))
+        let y_raw_val = fixed_point32::get_raw_value(y);
+        let z = fixed_point32::divide_u64(x, fixed_point32::create_from_raw_value(y_raw_val));
+        fixed_point32::multiply_u64(z, fixed_point32::create_from_raw_value(y_raw_val))
     }
     spec div_mul_incorrect {
         pragma verify=false; // TODO: disabled due to the CVC4 timeout
@@ -134,7 +137,7 @@ module 0x42::FixedPointArithmetic {
     }
 
     fun mul_2_times_incorrect(a: u64, b: FixedPoint32, c: FixedPoint32): u64 {
-        FixedPoint32::multiply_u64(FixedPoint32::multiply_u64(a, b), c)
+        fixed_point32::multiply_u64(fixed_point32::multiply_u64(a, b), c)
     }
     spec mul_2_times_incorrect {
         // there exists a, b and c such that their product is equal to 10.
@@ -142,7 +145,7 @@ module 0x42::FixedPointArithmetic {
     }
 
     fun mul_3_times_incorrect(a: u64, b: FixedPoint32, c: FixedPoint32, d: FixedPoint32): u64 {
-        FixedPoint32::multiply_u64(FixedPoint32::multiply_u64(FixedPoint32::multiply_u64(a, b), c), d)
+        fixed_point32::multiply_u64(fixed_point32::multiply_u64(fixed_point32::multiply_u64(a, b), c), d)
     }
     spec mul_3_times_incorrect {
         // there exists a, b, c and d such that their product is equal to 10.

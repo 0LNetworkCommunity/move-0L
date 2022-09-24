@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{anyhow, Context};
@@ -1186,33 +1187,32 @@ fn parse_ability(tokens: &mut Lexer) -> Result<(Ability, Loc), ParseError<Loc, a
 
 fn parse_type(tokens: &mut Lexer) -> Result<Type, ParseError<Loc, anyhow::Error>> {
     let t = match tokens.peek() {
-        Tok::Address => {
+        Tok::NameValue if matches!(tokens.content(), "address") => {
             tokens.advance()?;
             Type::Address
         }
-        Tok::Signer => {
-            tokens.advance()?;
-            Type::Signer
-        }
-        Tok::U8 => {
+        Tok::NameValue if matches!(tokens.content(), "u8") => {
             tokens.advance()?;
             Type::U8
         }
-        Tok::U64 => {
+        Tok::NameValue if matches!(tokens.content(), "u64") => {
             tokens.advance()?;
             Type::U64
         }
-        Tok::U128 => {
+        Tok::NameValue if matches!(tokens.content(), "u128") => {
             tokens.advance()?;
             Type::U128
         }
-        Tok::Bool => {
+        Tok::NameValue if matches!(tokens.content(), "bool") => {
             tokens.advance()?;
             Type::Bool
         }
-        Tok::Vector => {
+        Tok::NameValue if matches!(tokens.content(), "signer") => {
             tokens.advance()?;
-            consume_token(tokens, Tok::Less)?;
+            Type::Signer
+        }
+        Tok::NameBeginTyValue if matches!(tokens.content(), "vector<") => {
+            tokens.advance()?;
             let ty = parse_type(tokens)?;
             adjust_token(tokens, &[Tok::Greater])?;
             consume_token(tokens, Tok::Greater)?;
@@ -1306,12 +1306,12 @@ fn parse_type_parameter(
 }
 
 // TypeActuals: Vec<Type> = {
-//     <tys: ("<" <Comma<Type>> ">")?> => { ... }
+//     <tys: ('<' <Comma<Type>> ">")?> => { ... }
 // }
 
 fn parse_type_actuals(tokens: &mut Lexer) -> Result<Vec<Type>, ParseError<Loc, anyhow::Error>> {
     let tys = if tokens.peek() == Tok::Less {
-        tokens.advance()?; // consume the "<"
+        tokens.advance()?; // consume the '<'
         let list = parse_comma_list(tokens, &[Tok::Greater], parse_type, true)?;
         consume_token(tokens, Tok::Greater)?;
         list
@@ -1351,7 +1351,7 @@ where
 }
 
 // NameAndTypeActuals: (String, Vec<Type>) = {
-//     <n: NameBeginTy> "<" <tys: Comma<Type>> ">" => (n, tys),
+//     <n: NameBeginTy> '<' <tys: Comma<Type>> ">" => (n, tys),
 //     <n: Name> => (n, vec![]),
 // }
 
@@ -1780,7 +1780,6 @@ fn parse_function_visibility(
         };
         match sub_public_vis {
             None => FunctionVisibility::Public,
-            Some(Tok::Script) => FunctionVisibility::Script,
             Some(Tok::Friend) => FunctionVisibility::Friend,
             _ => panic!("Unexpected token that is not a visibility modifier"),
         }
@@ -1822,6 +1821,12 @@ fn parse_function_decl(
     };
 
     let visibility = parse_function_visibility(tokens)?;
+    let is_entry = if tokens.peek() == Tok::NameValue && tokens.content() == "entry" {
+        tokens.advance()?;
+        true
+    } else {
+        false
+    };
 
     let (name, type_parameters) = parse_name_and_type_parameters(tokens, parse_type_parameter)?;
     consume_token(tokens, Tok::LParen)?;
@@ -1852,10 +1857,11 @@ fn parse_function_decl(
     let func_name = FunctionName(name);
     let func = Function_::new(
         visibility,
+        is_entry,
         args,
-        ret.unwrap_or_else(Vec::new),
+        ret.unwrap_or_default(),
         type_parameters,
-        acquires.unwrap_or_else(Vec::new),
+        acquires.unwrap_or_default(),
         specifications,
         if is_native {
             consume_token(tokens, Tok::Semicolon)?;
@@ -1912,6 +1918,7 @@ fn parse_script(tokens: &mut Lexer) -> Result<Script, ParseError<Loc, anyhow::Er
     let end_loc = tokens.previous_end_loc();
     let main = Function_::new(
         FunctionVisibility::Public,
+        /* is_entry */ true,
         args,
         vec![],
         type_formals,

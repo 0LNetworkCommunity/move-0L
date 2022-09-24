@@ -1,13 +1,13 @@
 processed 4 tasks
 
 task 0 'print-bytecode'. lines 1-14:
-// Move bytecode v4
+// Move bytecode v5
 module 1d6.M {
 struct T has key {
 	b: bool
 }
 
-f(loc0: signer) {
+f(Arg0: signer) {
 B0:
 	0: ImmBorrowLoc[0](Arg0: signer)
 	1: Call[1](address_of(&signer): address)

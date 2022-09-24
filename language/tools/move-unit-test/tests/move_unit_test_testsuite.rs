@@ -1,7 +1,10 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use move_command_line_common::testing::{format_diff, read_env_update_baseline, EXP_EXT};
+use move_command_line_common::testing::{
+    add_update_baseline_fix, format_diff, read_env_update_baseline, EXP_EXT,
+};
 use move_unit_test::{self, UnitTestingConfig};
 use regex::RegexBuilder;
 use std::{
@@ -11,12 +14,18 @@ use std::{
 
 // We don't support statistics tests as that includes times which are variable and will make these
 // tests flaky.
-const TEST_MODIFIER_STRS: &[&str] = &["storage"];
+const TEST_MODIFIER_STRS: &[&str] = &[
+    "storage",
+    #[cfg(feature = "evm-backend")]
+    "evm",
+];
 
 pub fn modify(mut base_config: UnitTestingConfig, modifier_str: &str) -> Option<UnitTestingConfig> {
     // Add future test modifiers here
     match modifier_str {
         "storage" => base_config.report_storage_on_error = true,
+        #[cfg(feature = "evm-backend")]
+        "evm" => base_config.evm = true,
         _ => return None,
     };
     Some(base_config)
@@ -73,18 +82,15 @@ fn run_test_impl(path: &Path) -> anyhow::Result<()> {
     let source_files = vec![path.to_str().unwrap().to_owned()];
     let unit_test_config = UnitTestingConfig {
         num_threads: 1,
-        instruction_execution_bound: 1000,
-        filter: None,
+        instruction_execution_bound: Some(1000),
         source_files,
         dep_files: move_stdlib::move_stdlib_files(),
-        check_stackless_vm: false,
-        verbose: false,
-        report_statistics: false,
-        report_storage_on_error: false,
-        list: false,
         named_address_values: move_stdlib::move_stdlib_named_addresses()
             .into_iter()
             .collect(),
+        report_writeset: true,
+
+        ..UnitTestingConfig::default_with_bound(None)
     };
 
     let regex = RegexBuilder::new(r"(┌─ ).+/([^/]+)$")
@@ -104,18 +110,16 @@ fn run_test_impl(path: &Path) -> anyhow::Result<()> {
         if exp_exists {
             let expected = fs::read_to_string(&exp_path)?;
             if expected != cleaned_output {
-                anyhow::bail!(
+                let msg = format!(
                     "Expected outputs differ for {:?}:\n{}",
                     exp_path,
                     format_diff(expected, cleaned_output)
                 );
+                anyhow::bail!(add_update_baseline_fix(msg));
             }
         } else {
-            anyhow::bail!(
-                "No expected output found for {:?}.\
-                    You probably want to rerun with `env UPDATE_BASELINE=1`",
-                path
-            );
+            let msg = format!("No expected output found for {:?}", path);
+            anyhow::bail!(add_update_baseline_fix(msg));
         }
     }
 

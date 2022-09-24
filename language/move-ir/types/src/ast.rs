@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -123,7 +124,7 @@ pub struct ModuleDependency {
 //**************************************************************************************************
 
 /// A dependency/import declaration
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportDefinition {
     /// the dependency
     /// `addr.m`
@@ -265,7 +266,7 @@ pub struct StructDefinition_ {
 pub type StructDefinition = Spanned<StructDefinition_>;
 
 /// An explicit struct dependency
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructDependency {
     /// The declared abilities for the struct
     pub abilities: BTreeSet<Ability>,
@@ -332,14 +333,11 @@ pub struct FunctionDependency {
 }
 
 /// Public or internal modifier for a procedure
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum FunctionVisibility {
     /// The procedure can be invoked anywhere
     /// `public`
     Public,
-    /// The procedure can only be invoked from a script context
-    /// `public(script)`
-    Script,
     /// The procedure can be invoked internally as well as by modules in the friend list
     /// `public(friend)`
     Friend,
@@ -371,6 +369,8 @@ pub enum FunctionBody {
 pub struct Function_ {
     /// The visibility
     pub visibility: FunctionVisibility,
+    /// Is entry function
+    pub is_entry: bool,
     /// The type signature
     pub signature: FunctionSignature,
     /// List of nominal resources (declared in this module) that the procedure might access
@@ -506,7 +506,7 @@ pub type Block = Spanned<Block_>;
 
 /// Bottom of the value hierarchy. These values can be trivially copyable and stored in statedb as a
 /// single entry.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum CopyableVal_ {
     /// An address in the global storage
     Address(AccountAddress),
@@ -529,14 +529,14 @@ pub type CopyableVal = Spanned<CopyableVal_>;
 pub type ExpFields = Fields<Exp>;
 
 /// Enum for unary operators
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnaryOp {
     /// Boolean negation
     Not,
 }
 
 /// Enum for binary operators
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinOp {
     // u64 ops
     /// `+`
@@ -945,6 +945,7 @@ impl Function_ {
     /// See the declaration of the struct `Function` for more details
     pub fn new(
         visibility: FunctionVisibility,
+        is_entry: bool,
         formals: Vec<(Var, Type)>,
         return_type: Vec<Type>,
         type_parameters: Vec<(TypeVar, BTreeSet<Ability>)>,
@@ -955,6 +956,7 @@ impl Function_ {
         let signature = FunctionSignature::new(formals, return_type, type_parameters);
         Function_ {
             visibility,
+            is_entry,
             signature,
             acquires,
             specifications,

@@ -1,57 +1,66 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{data_cache::TransactionDataCache, runtime::VMRuntime};
-use move_binary_format::errors::*;
+use crate::{
+    data_cache::TransactionDataCache, native_extensions::NativeContextExtensions,
+    runtime::VMRuntime,
+};
+use move_binary_format::{
+    errors::*,
+    file_format::{AbilitySet, LocalIndex},
+};
 use move_core_types::{
     account_address::AccountAddress,
     effects::{ChangeSet, Event},
-    gas_schedule::GasAlgebra,
     identifier::IdentStr,
     language_storage::{ModuleId, TypeTag},
     resolver::MoveResolver,
     value::MoveTypeLayout,
 };
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_types::{
+    data_store::DataStore,
+    gas::GasMeter,
+    loaded_data::runtime_types::{CachedStructIndex, StructType, Type},
+};
+use std::{borrow::Borrow, sync::Arc};
 
 pub struct Session<'r, 'l, S> {
     pub(crate) runtime: &'l VMRuntime,
     pub(crate) data_cache: TransactionDataCache<'r, 'l, S>,
+    pub(crate) native_extensions: NativeContextExtensions<'r>,
 }
 
-/// Result of executing a function in the VM
-pub enum ExecutionResult {
-    /// Execution completed successfully and changed global state
-    Success {
-        /// Changes to global state that occurred during execution
-        change_set: ChangeSet,
-        /// Events emitted during execution
-        events: Vec<Event>,
-        /// Values returned by the function
-        return_values: Vec<Vec<u8>>,
-        /// Final value of inputs passed in to the entrypoint via a mutable reference
-        mutable_ref_values: Vec<Vec<u8>>,
-        /// Gas used during execution
-        gas_used: u64,
-    },
-    /// Execution failed and had no side effects
-    Fail {
-        /// The reason execution failed
-        error: VMError,
-        /// Gas used during execution
-        gas_used: u64,
-    },
+/// Serialized return values from function/script execution
+/// Simple struct is designed just to convey meaning behind serialized values
+#[derive(Debug)]
+pub struct SerializedReturnValues {
+    /// The value of any arguments that were mutably borrowed.
+    /// Non-mut borrowed values are not included
+    pub mutable_reference_outputs: Vec<(LocalIndex, Vec<u8>, MoveTypeLayout)>,
+    /// The return values from the function
+    pub return_values: Vec<(Vec<u8>, MoveTypeLayout)>,
 }
 
 impl<'r, 'l, S: MoveResolver> Session<'r, 'l, S> {
     /// Execute a Move function with the given arguments. This is mainly designed for an external
     /// environment to invoke system logic written in Move.
     ///
+    /// NOTE: There are NO checks on the `args` except that they can deserialize into the provided
+    /// types.
+    /// The ability to deserialize `args` into arbitrary types is *very* powerful, e.g. it can
+    /// used to manufacture `signer`'s or `Coin`'s from raw bytes. It is the responsibility of the
+    /// caller (e.g. adapter) to ensure that this power is used responsibly/securely for its
+    /// use-case.
+    ///
     /// The caller MUST ensure
     ///   - All types and modules referred to by the type arguments exist.
+    ///   - The signature is valid for the rules of the adapter
     ///
     /// The Move VM MUST return an invariant violation if the caller fails to follow any of the
     /// rules above.
+    ///
+    /// The VM will check that the function is marked as an 'entry' function.
     ///
     /// Currently if any other error occurs during execution, the Move VM will simply propagate that
     /// error back to the outer environment without handling/translating it. This behavior may be
@@ -59,111 +68,46 @@ impl<'r, 'l, S: MoveResolver> Session<'r, 'l, S> {
     ///
     /// In case an invariant violation occurs, the whole Session should be considered corrupted and
     /// one shall not proceed with effect generation.
-    pub fn execute_function(
+    pub fn execute_entry_function(
         &mut self,
         module: &ModuleId,
         function_name: &IdentStr,
         ty_args: Vec<TypeTag>,
-        args: Vec<Vec<u8>>,
-        gas_status: &mut GasStatus,
-    ) -> VMResult<Vec<Vec<u8>>> {
+        args: Vec<impl Borrow<[u8]>>,
+        gas_meter: &mut impl GasMeter,
+    ) -> VMResult<SerializedReturnValues> {
+        let bypass_declared_entry_check = false;
         self.runtime.execute_function(
             module,
             function_name,
             ty_args,
             args,
             &mut self.data_cache,
-            gas_status,
+            gas_meter,
+            &mut self.native_extensions,
+            bypass_declared_entry_check,
         )
     }
 
-    /// Execute `module`::`fuction_name`<`ty_args`>(`args`) and return the effects in
-    /// an `ExecutionResult`, including
-    /// * the write set and events
-    /// * return values of the function
-    /// * changes to values passes by mutable reference to the function
-    /// Arguments to the function in `args` can be any type--ground types, user-defined struct
-    /// types, and references (including mutable references).
-    /// A reference argument in `args[i]` with type `&T` or `&mut T` will be deserialized as a `T`.
-    /// Pure arguments are deserialized in the obvious way.
-    ///
-    /// NOTE: The ability to deserialize `args` into arbitrary types is very powerful--e.g., it can
-    /// used to manufacture `signer`'s or `Coin`'s from raw bytes. It is the respmsibility of the
-    /// caller (e.g. adapter) to ensure that this power is useed responsibility/securely for its use-case.
-    pub fn execute_function_for_effects(
-        mut self,
-        module: &ModuleId,
-        function_name: &IdentStr,
-        ty_args: Vec<TypeTag>,
-        args: Vec<Vec<u8>>,
-        gas_status: &mut GasStatus,
-    ) -> ExecutionResult {
-        let gas_budget = gas_status.remaining_gas().get();
-        let execution_res = self.runtime.execute_function_for_effects(
-            module,
-            function_name,
-            ty_args,
-            args,
-            &mut self.data_cache,
-            gas_status,
-        );
-        let gas_used = gas_budget - gas_status.remaining_gas().get();
-        match execution_res {
-            Ok((return_values, mutable_ref_values)) => match self.finish() {
-                Ok((change_set, events)) => ExecutionResult::Success {
-                    change_set,
-                    events,
-                    return_values,
-                    mutable_ref_values,
-                    gas_used,
-                },
-                Err(error) => ExecutionResult::Fail { error, gas_used },
-            },
-            Err(error) => ExecutionResult::Fail { error, gas_used },
-        }
-    }
-
-    /// Execute a Move script function with the given arguments.
-    ///
-    /// Unlike `execute_function` which is designed for system logic, `execute_script_function` is
-    /// mainly designed to call a script function in an existing module. It similar to
-    /// `execute_script` except that execution of the "script" begins with the specified function
-    ///
-    /// The Move VM MUST return a user error (in other words, an error that's not an invariant
-    /// violation) if
-    ///   - The function does not exist.
-    ///   - The function does not have script visibility.
-    ///   - The signature is not valid for a script. Not all script-visible module functions can
-    ///     be invoked from this entry point. See `move_bytecode_verifier::script_signature` for the
-    ///     rules.
-    ///   - Type arguments refer to a non-existent type.
-    ///   - Arguments (senders included) fail to deserialize or fail to match the signature of the
-    ///     script function.
-
-    ///
-    /// If any other error occurs during execution, the Move VM MUST propagate that error back to
-    /// the caller.
-    /// Besides, no user input should cause the Move VM to return an invariant violation.
-    ///
-    /// In case an invariant violation occurs, the whole Session should be considered corrupted and
-    /// one shall not proceed with effect generation.
-    pub fn execute_script_function(
+    /// Similar to execute_entry_function, but it bypasses visibility checks
+    pub fn execute_function_bypass_visibility(
         &mut self,
         module: &ModuleId,
         function_name: &IdentStr,
         ty_args: Vec<TypeTag>,
-        args: Vec<Vec<u8>>,
-        senders: Vec<AccountAddress>,
-        gas_status: &mut GasStatus,
-    ) -> VMResult<()> {
-        self.runtime.execute_script_function(
+        args: Vec<impl Borrow<[u8]>>,
+        gas_meter: &mut impl GasMeter,
+    ) -> VMResult<SerializedReturnValues> {
+        let bypass_declared_entry_check = true;
+        self.runtime.execute_function(
             module,
             function_name,
             ty_args,
             args,
-            senders,
             &mut self.data_cache,
-            gas_status,
+            gas_meter,
+            &mut self.native_extensions,
+            bypass_declared_entry_check,
         )
     }
 
@@ -201,19 +145,18 @@ impl<'r, 'l, S: MoveResolver> Session<'r, 'l, S> {
     /// one shall not proceed with effect generation.
     pub fn execute_script(
         &mut self,
-        script: Vec<u8>,
+        script: impl Borrow<[u8]>,
         ty_args: Vec<TypeTag>,
-        args: Vec<Vec<u8>>,
-        senders: Vec<AccountAddress>,
-        gas_status: &mut GasStatus,
-    ) -> VMResult<()> {
+        args: Vec<impl Borrow<[u8]>>,
+        gas_meter: &mut impl GasMeter,
+    ) -> VMResult<SerializedReturnValues> {
         self.runtime.execute_script(
             script,
             ty_args,
             args,
-            senders,
             &mut self.data_cache,
-            gas_status,
+            gas_meter,
+            &mut self.native_extensions,
         )
     }
 
@@ -234,9 +177,9 @@ impl<'r, 'l, S: MoveResolver> Session<'r, 'l, S> {
         &mut self,
         module: Vec<u8>,
         sender: AccountAddress,
-        gas_status: &mut GasStatus,
+        gas_meter: &mut impl GasMeter,
     ) -> VMResult<()> {
-        self.publish_module_bundle(vec![module], sender, gas_status)
+        self.publish_module_bundle(vec![module], sender, gas_meter)
     }
 
     /// Publish a series of modules.
@@ -251,14 +194,28 @@ impl<'r, 'l, S: MoveResolver> Session<'r, 'l, S> {
     ///
     /// In case an invariant violation occurs, the whole Session should be considered corrupted and
     /// one shall not proceed with effect generation.
+    ///
+    /// This operation performs compatibility checks if a module is replaced. See also
+    /// `move_binary_format::compatibility`.
     pub fn publish_module_bundle(
         &mut self,
         modules: Vec<Vec<u8>>,
         sender: AccountAddress,
-        gas_status: &mut GasStatus,
+        gas_meter: &mut impl GasMeter,
     ) -> VMResult<()> {
         self.runtime
-            .publish_module_bundle(modules, sender, &mut self.data_cache, gas_status)
+            .publish_module_bundle(modules, sender, &mut self.data_cache, gas_meter, true)
+    }
+
+    /// Same like `publish_module_bundle` but relaxes compatibility checks.
+    pub fn publish_module_bundle_relax_compatibility(
+        &mut self,
+        modules: Vec<Vec<u8>>,
+        sender: AccountAddress,
+        gas_meter: &mut impl GasMeter,
+    ) -> VMResult<()> {
+        self.runtime
+            .publish_module_bundle(modules, sender, &mut self.data_cache, gas_meter, false)
     }
 
     pub fn num_mutated_accounts(&self, sender: &AccountAddress) -> u64 {
@@ -276,9 +233,87 @@ impl<'r, 'l, S: MoveResolver> Session<'r, 'l, S> {
             .map_err(|e| e.finish(Location::Undefined))
     }
 
+    /// Same like `finish`, but also extracts the native context extensions from the session.
+    pub fn finish_with_extensions(
+        self,
+    ) -> VMResult<(ChangeSet, Vec<Event>, NativeContextExtensions<'r>)> {
+        let Session {
+            data_cache,
+            native_extensions,
+            ..
+        } = self;
+        let (change_set, events) = data_cache
+            .into_effects()
+            .map_err(|e| e.finish(Location::Undefined))?;
+        Ok((change_set, events, native_extensions))
+    }
+
+    /// Load a script and all of its types into cache
+    pub fn load_script(
+        &self,
+        script: impl Borrow<[u8]>,
+        ty_args: Vec<TypeTag>,
+    ) -> VMResult<LoadedFunctionInstantiation> {
+        let (_, instantiation) =
+            self.runtime
+                .loader()
+                .load_script(script.borrow(), &ty_args, &self.data_cache)?;
+        Ok(instantiation)
+    }
+
+    /// Load a module, a function, and all of its types into cache
+    pub fn load_function(
+        &self,
+        module_id: &ModuleId,
+        function_name: &IdentStr,
+        type_arguments: &[TypeTag],
+    ) -> VMResult<LoadedFunctionInstantiation> {
+        let (_, _, instantiation) = self.runtime.loader().load_function(
+            module_id,
+            function_name,
+            type_arguments,
+            &self.data_cache,
+        )?;
+        Ok(instantiation)
+    }
+
+    pub fn load_type(&self, type_tag: &TypeTag) -> VMResult<Type> {
+        self.runtime.loader().load_type(type_tag, &self.data_cache)
+    }
+
     pub fn get_type_layout(&self, type_tag: &TypeTag) -> VMResult<MoveTypeLayout> {
         self.runtime
             .loader()
             .get_type_layout(type_tag, &self.data_cache)
     }
+
+    /// Fetch a struct type from cache, if the index is in bounds
+    /// Helpful when paired with load_type, or any other API that returns 'Type'
+    pub fn get_struct_type(&self, index: CachedStructIndex) -> Option<Arc<StructType>> {
+        self.runtime.loader().get_struct_type(index)
+    }
+
+    /// Gets the abilities for this type, at it's particular instantiation
+    pub fn get_type_abilities(&self, ty: &Type) -> VMResult<AbilitySet> {
+        self.runtime
+            .loader()
+            .abilities(ty)
+            .map_err(|e| e.finish(Location::Undefined))
+    }
+
+    /// Gets the underlying data store
+    pub fn get_data_store(&mut self) -> &mut dyn DataStore {
+        &mut self.data_cache
+    }
+
+    /// Gets the underlying native extensions.
+    pub fn get_native_extensions(&mut self) -> &mut NativeContextExtensions<'r> {
+        &mut self.native_extensions
+    }
+}
+
+pub struct LoadedFunctionInstantiation {
+    pub type_arguments: Vec<Type>,
+    pub parameters: Vec<Type>,
+    pub return_: Vec<Type>,
 }

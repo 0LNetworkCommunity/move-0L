@@ -38,7 +38,7 @@ public fun test_will_error_and_pass() { 1/0; }
 public fun test_will_error_and_fail() { 1/0; }
 
 #[test, expected_failure] // Can have multiple in one attribute. This test will pass.
-public(script) fun this_other_test_will_abort_and_pass() { abort 1 }
+public fun this_other_test_will_abort_and_pass() { abort 1 }
 ```
 
 With arguments, a test annotation takes the form `#[test(<param_name_1> = <address>, ..., <param_name_n> = <address>)]`. If a function is annotated in such a manner, the function's parameters must be a permutation of the parameters <`param_name_1>, ..., <param_name_n>`, i.e., the order of these parameters as they occur in the function and their order in the test annotation do not have to be the same, but they must be able to be matched up with each other by name.
@@ -78,13 +78,13 @@ A module and any of its members can be declared as test only. In such a case the
 
 ```
 #[test_only] // test only attributes can be attached to modules
-module ABC { ... }
+module abc { ... }
 
 #[test_only] // test only attributes can be attached to named addresses
 address ADDR = @0x1;
 
 #[test_only] // .. to uses
-use 0x1::SomeOtherModule;
+use 0x1::some_other_module;
 
 #[test_only] // .. to structs
 struct SomeStruct { ... }
@@ -95,7 +95,7 @@ fun test_only_function(...) { ... }
 
 ## Running Unit Tests
 
-Unit tests for a Move package can be run with the [`move package test`
+Unit tests for a Move package can be run with the [`move test`
 command](./packages.md).
 
 When running tests, every test will either `PASS`, `FAIL`, or `TIMEOUT`. If a test case fails, the location of the failure along with the function name that caused the failure will be reported if possible. You can see an example of this below.
@@ -105,7 +105,7 @@ A test will be marked as timing out if it exceeds the maximum number of instruct
 There are also a number of options that can be passed to the unit testing binary to fine-tune testing and to help debug failing tests. These can be found using the the help flag:
 
 ```
-$ move package -h
+$ move -h
 ```
 
 ## Example
@@ -113,22 +113,23 @@ $ move package -h
 A simple module using some of the unit testing features is shown in the following example:
 
 First create an empty package and change directory into it:
+
 ```
-$ move package new TestExample; cd TestExample
+$ move new TestExample; cd TestExample
 ```
 
 Next add the following to the `Move.toml`:
 
 ```
 [dependencies]
-MoveStdlib = { git = "https://github.com/diem/diem.git", subdir="language/move-stdlib", rev = "56ab033cc403b489e891424a629e76f643d4fb6b", addr_subst = { "Std" = "0x1" } }
+MoveStdlib = { git = "https://github.com/diem/diem.git", subdir="language/move-stdlib", rev = "56ab033cc403b489e891424a629e76f643d4fb6b", addr_subst = { "std" = "0x1" } }
 ```
 
 Next add the following module under the `sources` directory:
 
 ```
-// filename: sources/MyModule.move
-module 0x1::MyModule {
+// filename: sources/my_module.move
+module 0x1::my_module {
 
     struct MyCoin has key { value: u64 }
 
@@ -173,16 +174,16 @@ module 0x1::MyModule {
 
 ### Running Tests
 
-You can then run these tests with the `move package test` command:
+You can then run these tests with the `move test` command:
 
 ```
-$ move package test
+$ move test
 BUILDING MoveStdlib
 BUILDING TestExample
 Running Move unit tests
-[ PASS    ] 0x1::MyModule::make_sure_non_zero_coin_passes
-[ PASS    ] 0x1::MyModule::make_sure_zero_coin_fails
-[ PASS    ] 0x1::MyModule::test_has_coin
+[ PASS    ] 0x1::my_module::make_sure_non_zero_coin_passes
+[ PASS    ] 0x1::my_module::make_sure_zero_coin_fails
+[ PASS    ] 0x1::my_module::test_has_coin
 Test result: OK. Total tests: 3; passed: 3; failed: 0
 ```
 
@@ -192,12 +193,12 @@ Test result: OK. Total tests: 3; passed: 3; failed: 0
 This will only run tests whose fully qualified name contains `<str>`. For example if we wanted to only run tests with `"zero_coin"` in their name:
 
 ```
-$ move package test -f zero_coin
+$ move test -f zero_coin
 CACHED MoveStdlib
 BUILDING TestExample
 Running Move unit tests
-[ PASS    ] 0x1::MyModule::make_sure_non_zero_coin_passes
-[ PASS    ] 0x1::MyModule::make_sure_zero_coin_fails
+[ PASS    ] 0x1::my_module::make_sure_non_zero_coin_passes
+[ PASS    ] 0x1::my_module::make_sure_zero_coin_fails
 Test result: OK. Total tests: 2; passed: 2; failed: 0
 ```
 
@@ -205,17 +206,17 @@ Test result: OK. Total tests: 2; passed: 2; failed: 0
 This bounds the number of instructions that can be executed for any one test to `<bound>`:
 
 ```
-$ move package test -i 0
+$ move test -i 0
 CACHED MoveStdlib
 BUILDING TestExample
 Running Move unit tests
-[ TIMEOUT ] 0x1::MyModule::make_sure_non_zero_coin_passes
-[ TIMEOUT ] 0x1::MyModule::make_sure_zero_coin_fails
-[ TIMEOUT ] 0x1::MyModule::test_has_coin
+[ TIMEOUT ] 0x1::my_module::make_sure_non_zero_coin_passes
+[ TIMEOUT ] 0x1::my_module::make_sure_zero_coin_fails
+[ TIMEOUT ] 0x1::my_module::test_has_coin
 
 Test failures:
 
-Failures in 0x1::MyModule:
+Failures in 0x1::my_module:
 
 ┌── make_sure_non_zero_coin_passes ──────
 │ Test timed out
@@ -238,34 +239,34 @@ Test result: FAILED. Total tests: 3; passed: 0; failed: 3
 With these flags you can gather statistics about the tests run and report the runtime and instructions executed for each test. For example, if we wanted to see the statistics for the tests in the example above:
 
 ```
-$ move package test -s
+$ move test -s
 CACHED MoveStdlib
 BUILDING TestExample
 Running Move unit tests
-[ PASS    ] 0x1::MyModule::make_sure_non_zero_coin_passes
-[ PASS    ] 0x1::MyModule::make_sure_zero_coin_fails
-[ PASS    ] 0x1::MyModule::test_has_coin
+[ PASS    ] 0x1::my_module::make_sure_non_zero_coin_passes
+[ PASS    ] 0x1::my_module::make_sure_zero_coin_fails
+[ PASS    ] 0x1::my_module::test_has_coin
 
 Test Statistics:
 
-┌───────────────────────────────────────────────┬────────────┬───────────────────────────┐
-│                   Test Name                   │    Time    │   Instructions Executed   │
-├───────────────────────────────────────────────┼────────────┼───────────────────────────┤
-│ 0x1::MyModule::make_sure_non_zero_coin_passes │   0.009    │             1             │
-├───────────────────────────────────────────────┼────────────┼───────────────────────────┤
-│ 0x1::MyModule::make_sure_zero_coin_fails      │   0.008    │             1             │
-├───────────────────────────────────────────────┼────────────┼───────────────────────────┤
-│ 0x1::MyModule::test_has_coin                  │   0.008    │             1             │
-└───────────────────────────────────────────────┴────────────┴───────────────────────────┘
+┌────────────────────────────────────────────────┬────────────┬───────────────────────────┐
+│                   Test Name                    │    Time    │   Instructions Executed   │
+├────────────────────────────────────────────────┼────────────┼───────────────────────────┤
+│ 0x1::my_module::make_sure_non_zero_coin_passes │   0.009    │             1             │
+├────────────────────────────────────────────────┼────────────┼───────────────────────────┤
+│ 0x1::my_module::make_sure_zero_coin_fails      │   0.008    │             1             │
+├────────────────────────────────────────────────┼────────────┼───────────────────────────┤
+│ 0x1::my_module::test_has_coin                  │   0.008    │             1             │
+└────────────────────────────────────────────────┴────────────┴───────────────────────────┘
 
 Test result: OK. Total tests: 3; passed: 3; failed: 0
 ```
 
 #### `-g` or `--state-on-error`
-These flags will print the global state for any test failures. e.g., if we added the following (failing) test to the `MyModule` example:
+These flags will print the global state for any test failures. e.g., if we added the following (failing) test to the `my_module` example:
 
 ```
-module 0x1::MyModule {
+module 0x1::my_module {
     ...
     #[test(a = @0x1)]
     fun test_has_coin_bad(a: signer) {
@@ -276,28 +277,28 @@ module 0x1::MyModule {
 }
 ```
 
-we would get get the following output when running the tests:
+we would get the following output when running the tests:
 
 ```
-$ move package test -g
+$ move test -g
 CACHED MoveStdlib
 BUILDING TestExample
 Running Move unit tests
-[ PASS    ] 0x1::MyModule::make_sure_non_zero_coin_passes
-[ PASS    ] 0x1::MyModule::make_sure_zero_coin_fails
-[ PASS    ] 0x1::MyModule::test_has_coin
-[ FAIL    ] 0x1::MyModule::test_has_coin_bad
+[ PASS    ] 0x1::my_module::make_sure_non_zero_coin_passes
+[ PASS    ] 0x1::my_module::make_sure_zero_coin_fails
+[ PASS    ] 0x1::my_module::test_has_coin
+[ FAIL    ] 0x1::my_module::test_has_coin_bad
 
 Test failures:
 
-Failures in 0x1::MyModule:
+Failures in 0x1::my_module:
 
 ┌── test_has_coin_bad ──────
 │ error[E11001]: test failure
-│    ┌─ /home/tzakian/TestExample/sources/MyModule.move:47:10
+│    ┌─ /home/tzakian/TestExample/sources/my_module.move:47:10
 │    │
 │ 44 │      fun test_has_coin_bad(a: signer) {
-│    │          ----------------- In this function in 0x1::MyModule
+│    │          ----------------- In this function in 0x1::my_module
 │    ·
 │ 47 │          assert!(has_coin(@0x2), 1);
 │    │          ^^^^^^^^^^^^^^^^^^^^^^^^^^ Test was not expected to abort but it aborted with 1 here
@@ -305,7 +306,7 @@ Failures in 0x1::MyModule:
 │
 │ ────── Storage state at point of failure ──────
 │ 0x1:
-│       => key 0x1::MyModule::MyCoin {
+│       => key 0x1::my_module::MyCoin {
 │           value: 1
 │       }
 │

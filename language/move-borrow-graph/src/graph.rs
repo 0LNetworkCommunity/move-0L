@@ -1,18 +1,18 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     paths::{self, Path, PathSlice},
     references::*,
 };
-use mirai_annotations::{debug_checked_postcondition, debug_checked_precondition};
 use std::collections::{BTreeMap, BTreeSet};
 
 //**************************************************************************************************
 // Definitions
 //**************************************************************************************************
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BorrowGraph<Loc: Copy, Lbl: Clone + Ord>(BTreeMap<RefID, Ref<Loc, Lbl>>);
 
 //**************************************************************************************************
@@ -147,7 +147,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
             .borrowed_by
             .0
             .entry(child_id)
-            .or_insert_with(BTreeSet::new)
+            .or_insert_with(BorrowEdgeSet::new)
             .insert(edge);
         let child = self.0.get_mut(&child_id).unwrap();
         child.borrows_from.insert(parent_id);
@@ -166,7 +166,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
     }
 
     fn factor(&mut self, parent_id: RefID, loc: Loc, path: Path<Lbl>, intermediate_id: RefID) {
-        debug_checked_precondition!(self.check_invariant());
+        debug_assert!(self.check_invariant());
         let parent = self.0.get_mut(&parent_id).unwrap();
         let mut needs_factored = vec![];
         for (child_id, parent_to_child_edges) in &parent.borrowed_by.0 {
@@ -214,7 +214,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
             path,
             intermediate_id,
         );
-        debug_checked_postcondition!(self.check_invariant());
+        debug_assert!(self.check_invariant());
     }
 
     //**********************************************************************************************
@@ -225,7 +225,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
     /// Fixes any transitive borrows, so if `parent` borrowed by `id` borrowed by `child`
     /// After the release, `parent` borrowed by `child`
     pub fn release(&mut self, id: RefID) {
-        debug_checked_precondition!(self.check_invariant());
+        debug_assert!(self.check_invariant());
         let Ref {
             borrowed_by,
             borrows_from,
@@ -251,7 +251,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
             let child = self.0.get_mut(child_ref_id).unwrap();
             child.borrows_from.remove(&id);
         }
-        debug_checked_postcondition!(self.check_invariant());
+        debug_assert!(self.check_invariant());
     }
 
     fn splice_out_intermediate(
@@ -308,7 +308,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
                             .or_insert_with(BorrowEdges::new)
                             .0
                             .entry(*child_id)
-                            .or_insert_with(BTreeSet::new)
+                            .or_insert_with(BorrowEdgeSet::new)
                             .insert(other_edge.clone());
                     }
                 }
@@ -324,7 +324,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
     /// Utility for remapping the reference ids according the `id_map` provided
     /// If it is not in the map, the id remains the same
     pub fn remap_refs(&mut self, id_map: &BTreeMap<RefID, RefID>) {
-        debug_checked_precondition!(self.check_invariant());
+        debug_assert!(self.check_invariant());
         for info in self.0.values_mut() {
             info.remap_refs(id_map);
         }
@@ -333,7 +333,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
                 self.0.insert(*new, info);
             }
         }
-        debug_checked_postcondition!(self.check_invariant());
+        debug_assert!(self.check_invariant());
     }
 
     //**********************************************************************************************
@@ -344,10 +344,10 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
     /// It adds only 'unmatched' edges from other into self, i.e. for any edge in other, if there
     /// is an edge in self that is <= than that edge, it is not added.
     pub fn join(&self, other: &Self) -> Self {
-        debug_checked_precondition!(self.check_invariant());
-        debug_checked_precondition!(other.check_invariant());
-        debug_checked_precondition!(self.0.keys().all(|id| other.0.contains_key(id)));
-        debug_checked_precondition!(other.0.keys().all(|id| self.0.contains_key(id)));
+        debug_assert!(self.check_invariant());
+        debug_assert!(other.check_invariant());
+        debug_assert!(self.0.keys().all(|id| other.0.contains_key(id)));
+        debug_assert!(other.0.keys().all(|id| self.0.contains_key(id)));
 
         let mut joined = self.clone();
         for (parent_id, unmatched_borrowed_by) in self.unmatched_edges(other) {
@@ -357,7 +357,7 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
                 }
             }
         }
-        debug_checked_postcondition!(joined.check_invariant());
+        debug_assert!(joined.check_invariant());
         joined
     }
 
@@ -387,13 +387,21 @@ impl<Loc: Copy, Lbl: Clone + Ord> BorrowGraph<Loc, Lbl> {
         let child_to_parent_consistency =
             |cur_child, parent| self.0[parent].borrowed_by.0.contains_key(cur_child);
         self.0.iter().all(|(id, r)| {
-            r.borrowed_by
+            let borrowed_by_is_bounded = r
+                .borrowed_by
+                .0
+                .values()
+                .all(|edges| edges.len() <= MAX_EDGE_SET_SIZE);
+            let borrowed_by_is_consistent = r
+                .borrowed_by
                 .0
                 .keys()
-                .all(|c| parent_to_child_consistency(id, c))
-                && r.borrows_from
-                    .iter()
-                    .all(|p| child_to_parent_consistency(id, p))
+                .all(|c| parent_to_child_consistency(id, c));
+            let borrows_from_is_consistent = r
+                .borrows_from
+                .iter()
+                .all(|p| child_to_parent_consistency(id, p));
+            borrowed_by_is_bounded && borrowed_by_is_consistent && borrows_from_is_consistent
         })
     }
 

@@ -1,12 +1,16 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     expansion::ast::{
         ability_modifiers_ast_debug, AbilitySet, Attributes, Friend, ModuleIdent, SpecId,
+        Visibility,
     },
     naming::ast::{BuiltinTypeName, BuiltinTypeName_, StructTypeParameter, TParam},
-    parser::ast::{BinOp, ConstantName, Field, FunctionName, StructName, UnaryOp, Var, Visibility},
+    parser::ast::{
+        BinOp, ConstantName, Field, FunctionName, StructName, UnaryOp, Var, ENTRY_MODIFIER,
+    },
     shared::{ast_debug::*, unique_map::UniqueMap, NumericalAddress},
 };
 use move_ir_types::location::*;
@@ -31,6 +35,8 @@ pub struct Program {
 
 #[derive(Debug, Clone)]
 pub struct Script {
+    // package name metadata from compiler arguments, not used for any language rules
+    pub package_name: Option<Symbol>,
     pub attributes: Attributes,
     pub loc: Loc,
     pub constants: UniqueMap<ConstantName, Constant>,
@@ -44,6 +50,8 @@ pub struct Script {
 
 #[derive(Debug, Clone)]
 pub struct ModuleDefinition {
+    // package name metadata from compiler arguments, not used for any language rules
+    pub package_name: Option<Symbol>,
     pub attributes: Attributes,
     pub is_source_module: bool,
     /// `dependency_order` is the topological order/rank in the dependency graph.
@@ -58,7 +66,7 @@ pub struct ModuleDefinition {
 // Structs
 //**************************************************************************************************
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct StructDefinition {
     pub attributes: Attributes,
     pub abilities: AbilitySet,
@@ -66,7 +74,7 @@ pub struct StructDefinition {
     pub fields: StructFields,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum StructFields {
     Defined(Vec<(Field, BaseType)>),
     Native(Loc),
@@ -88,7 +96,7 @@ pub struct Constant {
 // Functions
 //**************************************************************************************************
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct FunctionSignature {
     pub type_parameters: Vec<TParam>,
     pub parameters: Vec<(Var, SingleType)>,
@@ -109,6 +117,7 @@ pub type FunctionBody = Spanned<FunctionBody_>;
 pub struct Function {
     pub attributes: Attributes,
     pub visibility: Visibility,
+    pub entry: Option<Loc>,
     pub signature: FunctionSignature,
     pub acquires: BTreeMap<StructName, Loc>,
     pub body: FunctionBody,
@@ -119,6 +128,7 @@ pub struct Function {
 //**************************************************************************************************
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum TypeName_ {
     Builtin(BuiltinTypeName),
     ModuleType(ModuleIdent, StructName),
@@ -135,14 +145,14 @@ pub enum BaseType_ {
 }
 pub type BaseType = Spanned<BaseType_>;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SingleType_ {
     Base(BaseType),
     Ref(bool, BaseType),
 }
 pub type SingleType = Spanned<SingleType_>;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Type_ {
     Unit,
@@ -228,7 +238,7 @@ pub type LValue = Spanned<LValue_>;
 // Expressions
 //**************************************************************************************************
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum UnitCase {
     Trailing,
     Implicit,
@@ -244,7 +254,7 @@ pub struct ModuleCall {
     pub acquires: BTreeMap<StructName, Loc>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BuiltinFunction_ {
     MoveTo(BaseType),
     MoveFrom(BaseType),
@@ -271,12 +281,30 @@ pub enum Value_ {
 }
 pub type Value = Spanned<Value_>;
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum MoveOpAnnotation {
+    // 'move' annotated by the user
+    FromUser,
+    // inferred based on liveness data
+    InferredLastUsage,
+    // inferred based on no 'copy' ability
+    InferredNoCopy,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum UnannotatedExp_ {
-    Unit { case: UnitCase },
+    Unit {
+        case: UnitCase,
+    },
     Value(Value),
-    Move { from_user: bool, var: Var },
-    Copy { from_user: bool, var: Var },
+    Move {
+        annotation: MoveOpAnnotation,
+        var: Var,
+    },
+    Copy {
+        from_user: bool,
+        var: Var,
+    },
     Constant(ConstantName),
 
     ModuleCall(Box<ModuleCall>),
@@ -584,12 +612,16 @@ impl AstDebug for Program {
 impl AstDebug for Script {
     fn ast_debug(&self, w: &mut AstWriter) {
         let Script {
+            package_name,
             attributes,
             loc: _loc,
             constants,
             function_name,
             function,
         } = self;
+        if let Some(n) = package_name {
+            w.writeln(&format!("{}", n))
+        }
         attributes.ast_debug(w);
         for cdef in constants.key_cloned_iter() {
             cdef.ast_debug(w);
@@ -602,6 +634,7 @@ impl AstDebug for Script {
 impl AstDebug for ModuleDefinition {
     fn ast_debug(&self, w: &mut AstWriter) {
         let ModuleDefinition {
+            package_name,
             attributes,
             is_source_module,
             dependency_order,
@@ -610,6 +643,9 @@ impl AstDebug for ModuleDefinition {
             constants,
             functions,
         } = self;
+        if let Some(n) = package_name {
+            w.writeln(&format!("{}", n))
+        }
         attributes.ast_debug(w);
         if *is_source_module {
             w.writeln("library module")
@@ -674,6 +710,7 @@ impl AstDebug for (FunctionName, &Function) {
             Function {
                 attributes,
                 visibility,
+                entry,
                 signature,
                 acquires,
                 body,
@@ -681,6 +718,9 @@ impl AstDebug for (FunctionName, &Function) {
         ) = self;
         attributes.ast_debug(w);
         visibility.ast_debug(w);
+        if entry.is_some() {
+            w.write(&format!("{} ", ENTRY_MODIFIER));
+        }
         if let FunctionBody_::Native = &body.value {
             w.write("native ");
         }
@@ -987,14 +1027,14 @@ impl AstDebug for UnannotatedExp_ {
                 case: UnitCase::Trailing,
             } => w.write("/*;()*/"),
             E::Value(v) => v.ast_debug(w),
-            E::Move {
-                from_user: false,
-                var: v,
-            } => w.write(&format!("move {}", v)),
-            E::Move {
-                from_user: true,
-                var: v,
-            } => w.write(&format!("move@{}", v)),
+            E::Move { annotation, var: v } => {
+                let case = match annotation {
+                    MoveOpAnnotation::FromUser => "@",
+                    MoveOpAnnotation::InferredLastUsage => "#last ",
+                    MoveOpAnnotation::InferredNoCopy => "#no-copy ",
+                };
+                w.write(&format!("move{}{}", case, v))
+            }
             E::Copy {
                 from_user: false,
                 var: v,

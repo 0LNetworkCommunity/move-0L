@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! This escape analysis flags procedures that return a reference pointing inside of a struct type
@@ -259,7 +260,7 @@ impl<'a> TransferFunctions for EscapeAnalysis<'a> {
                             callee_fun_env.module_env.get_identifier().as_str(),
                             callee_fun_env.get_identifier().as_str(),
                         ) {
-                            ("Vector", "borrow_mut") | ("Vector", "borrow") => {
+                            ("vector", "borrow_mut") | ("vector", "borrow") => {
                                 let vec_arg = 0;
                                 let to_propagate = match state.get_local_index(&args[vec_arg]) {
                                     AbsValue::OkRef => {
@@ -293,6 +294,9 @@ impl<'a> TransferFunctions for EscapeAnalysis<'a> {
                 FreezeRef => state.assign(rets[0], &args[0]),
                 WriteRef | MoveTo(..) => {
                     // these operations do not assign any locals
+                }
+                Uninit => {
+                    // this operation is just a marker and does not assign any locals
                 }
                 Destroy => {
                     state.remove(&args[0]);

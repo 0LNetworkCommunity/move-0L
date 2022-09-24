@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use std::path::Path;
@@ -18,7 +19,7 @@ use std::{fs::File, io::Read};
 const FLAGS: &[&str] = &[
     "--verbose=warn",
     "--dependency=../../move-stdlib/sources",
-    "--named-addresses=Std=0x1",
+    "--named-addresses=std=0x1",
     "--docgen",
 ];
 
@@ -95,7 +96,7 @@ fn test_docgen(path: &Path, mut options: Options, suffix: &str) -> anyhow::Resul
         }
         Err(err) => format!("Move prover docgen returns: {}\n", err),
     };
-    output += &String::from_utf8_lossy(&error_writer.into_inner()).to_string();
+    output += &String::from_utf8_lossy(&error_writer.into_inner());
     let baseline_path = path.with_extension(suffix);
     verify_or_update_baseline(baseline_path.as_path(), &output)?;
     Ok(())

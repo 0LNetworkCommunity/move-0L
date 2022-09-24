@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -17,14 +18,19 @@ use move_binary_format::{
     },
     views::{FunctionHandleView, ViewInternals},
 };
-use move_core_types::value::MoveValue;
+use move_core_types::{
+    language_storage::{self, CORE_CODE_ADDRESS},
+    value::MoveValue,
+};
 use move_model::{
     ast::{ConditionKind, TempIndex},
-    model::{FunctionEnv, Loc, StructId},
+    model::{FunId, FunctionEnv, Loc, ModuleId, StructId},
     ty::{PrimitiveType, Type},
 };
+use num::BigUint;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    convert::TryInto,
     matches,
 };
 
@@ -37,6 +43,7 @@ pub struct StacklessBytecodeGenerator<'a> {
     code: Vec<Bytecode>,
     location_table: BTreeMap<AttrId, Loc>,
     loop_invariants: BTreeSet<AttrId>,
+    fallthrough_labels: BTreeSet<Label>,
 }
 
 impl<'a> StacklessBytecodeGenerator<'a> {
@@ -53,6 +60,7 @@ impl<'a> StacklessBytecodeGenerator<'a> {
             code: vec![],
             location_table: BTreeMap::new(),
             loop_invariants: BTreeSet::new(),
+            fallthrough_labels: BTreeSet::new(),
         }
     }
 
@@ -77,6 +85,7 @@ impl<'a> StacklessBytecodeGenerator<'a> {
                 if label_map.get(&next_offs).is_none() {
                     let fall_through_label = Label::new(label_map.len());
                     label_map.insert(next_offs, fall_through_label);
+                    self.fallthrough_labels.insert(fall_through_label);
                 }
             };
         }
@@ -106,6 +115,7 @@ impl<'a> StacklessBytecodeGenerator<'a> {
             code,
             location_table,
             loop_invariants,
+            ..
         } = self;
 
         FunctionData::new(
@@ -187,6 +197,24 @@ impl<'a> StacklessBytecodeGenerator<'a> {
 
         let attr_id = self.new_loc_attr(code_offset);
 
+        let global_env = self.func_env.module_env.env;
+        let mut vec_module_id_opt: Option<ModuleId> = None;
+        let mut mk_vec_function_operation = |name: &str, tys: Vec<Type>| -> Operation {
+            let vec_module_env = vec_module_id_opt.get_or_insert_with(|| {
+                let vec_module = global_env.to_module_name(&language_storage::ModuleId::new(
+                    CORE_CODE_ADDRESS,
+                    move_core_types::identifier::Identifier::new("vector").unwrap(),
+                ));
+                global_env
+                    .find_module(&vec_module)
+                    .expect("unexpected reference to module not found in global env")
+                    .get_id()
+            });
+
+            let vec_fun = FunId::new(global_env.symbol_pool().make(name));
+            Operation::Function(*vec_module_env, vec_fun, tys)
+        };
+
         let mk_call = |op: Operation, dsts: Vec<usize>, srcs: Vec<usize>| -> Bytecode {
             Bytecode::Call(attr_id, dsts, op, srcs, None)
         };
@@ -249,8 +277,31 @@ impl<'a> StacklessBytecodeGenerator<'a> {
             }
 
             MoveBytecode::Branch(target) => {
-                self.code
-                    .push(Bytecode::Jump(attr_id, *label_map.get(target).unwrap()));
+                // Attempt to eliminate the common pattern `if c goto L1 else L2; L2: goto L3`
+                // and replace it with `if c goto L1 else L3`, provided L2 is a fall-through
+                // label, i.e. not referenced from elsewhere.
+                let target_label = *label_map.get(target).unwrap();
+                let at = self.code.len();
+                let rewritten = if at >= 2 {
+                    match (&self.code[at - 2], &self.code[at - 1]) {
+                        (
+                            Bytecode::Branch(attr, if_true, if_false, c),
+                            Bytecode::Label(_, cont),
+                        ) if self.fallthrough_labels.contains(cont) && if_false == cont => {
+                            let bc = Bytecode::Branch(*attr, *if_true, target_label, *c);
+                            self.code.pop();
+                            self.code.pop();
+                            self.code.push(bc);
+                            true
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+                if !rewritten {
+                    self.code.push(Bytecode::Jump(attr_id, target_label));
+                }
             }
 
             MoveBytecode::FreezeRef => {
@@ -1054,30 +1105,191 @@ impl<'a> StacklessBytecodeGenerator<'a> {
 
             MoveBytecode::Nop => self.code.push(Bytecode::Nop(attr_id)),
 
-            // TODO: implement the translation when the the vector-related bytecode is ready
-            MoveBytecode::VecPack(..)
-            | MoveBytecode::VecLen(_)
-            | MoveBytecode::VecImmBorrow(_)
-            | MoveBytecode::VecMutBorrow(_)
-            | MoveBytecode::VecPushBack(_)
-            | MoveBytecode::VecPopBack(_)
-            | MoveBytecode::VecUnpack(..)
-            | MoveBytecode::VecSwap(_) => unimplemented!("Vector bytecode not supported yet"),
+            // TODO full prover support for vector bytecode instructions
+            // These should go to non-functional call operations
+            MoveBytecode::VecLen(sig) => {
+                let tys = self.get_type_params(*sig);
+                let operand_index = self.temp_stack.pop().unwrap();
+                let temp_index = self.temp_count;
+                self.local_types.push(Type::Primitive(PrimitiveType::U64));
+                self.temp_count += 1;
+                self.temp_stack.push(temp_index);
+                self.code.push(Bytecode::Call(
+                    attr_id,
+                    vec![temp_index],
+                    mk_vec_function_operation("length", tys),
+                    vec![operand_index],
+                    None,
+                ))
+            }
+            MoveBytecode::VecMutBorrow(sig) | MoveBytecode::VecImmBorrow(sig) => {
+                let is_mut = match bytecode {
+                    MoveBytecode::VecMutBorrow(_) => true,
+                    MoveBytecode::VecImmBorrow(_) => false,
+                    _ => unreachable!(),
+                };
+                let [ty]: [Type; 1] = self.get_type_params(*sig).try_into().unwrap();
+                let operand2_index = self.temp_stack.pop().unwrap();
+                let operand1_index = self.temp_stack.pop().unwrap();
+                let temp_index = self.temp_count;
+                self.local_types
+                    .push(Type::Reference(is_mut, Box::new(ty.clone())));
+                self.temp_count += 1;
+                self.temp_stack.push(temp_index);
+                let vec_fun = if is_mut { "borrow_mut" } else { "borrow" };
+                self.code.push(Bytecode::Call(
+                    attr_id,
+                    vec![temp_index],
+                    mk_vec_function_operation(vec_fun, vec![ty]),
+                    vec![operand1_index, operand2_index],
+                    None,
+                ))
+            }
+            MoveBytecode::VecPushBack(sig) => {
+                let tys = self.get_type_params(*sig);
+                let operand2_index = self.temp_stack.pop().unwrap();
+                let operand1_index = self.temp_stack.pop().unwrap();
+                self.code.push(Bytecode::Call(
+                    attr_id,
+                    vec![],
+                    mk_vec_function_operation("push_back", tys),
+                    vec![operand1_index, operand2_index],
+                    None,
+                ))
+            }
+            MoveBytecode::VecPopBack(sig) => {
+                let [ty]: [Type; 1] = self.get_type_params(*sig).try_into().unwrap();
+                let operand_index = self.temp_stack.pop().unwrap();
+                let temp_index = self.temp_count;
+                self.local_types.push(ty.clone());
+                self.temp_count += 1;
+                self.temp_stack.push(temp_index);
+                self.code.push(Bytecode::Call(
+                    attr_id,
+                    vec![temp_index],
+                    mk_vec_function_operation("pop_back", vec![ty]),
+                    vec![operand_index],
+                    None,
+                ))
+            }
+            MoveBytecode::VecSwap(sig) => {
+                let tys = self.get_type_params(*sig);
+                let operand3_index = self.temp_stack.pop().unwrap();
+                let operand2_index = self.temp_stack.pop().unwrap();
+                let operand1_index = self.temp_stack.pop().unwrap();
+                self.code.push(Bytecode::Call(
+                    attr_id,
+                    vec![],
+                    mk_vec_function_operation("swap", tys),
+                    vec![operand1_index, operand2_index, operand3_index],
+                    None,
+                ))
+            }
+            MoveBytecode::VecPack(sig, n) => {
+                let n = *n as usize;
+                let [ty]: [Type; 1] = self.get_type_params(*sig).try_into().unwrap();
+                let operands = self.temp_stack.split_off(self.temp_stack.len() - n);
+                let temp_index = self.temp_count;
+                self.local_types.push(Type::Vector(Box::new(ty.clone())));
+                self.temp_count += 1;
+                self.temp_stack.push(temp_index);
+
+                self.code.push(Bytecode::Call(
+                    attr_id,
+                    vec![temp_index],
+                    mk_vec_function_operation("empty", vec![ty.clone()]),
+                    vec![],
+                    None,
+                ));
+                if !operands.is_empty() {
+                    let mut_ref_index = self.temp_count;
+                    self.local_types.push(Type::Reference(
+                        true,
+                        Box::new(Type::Vector(Box::new(ty.clone()))),
+                    ));
+                    self.temp_count += 1;
+
+                    self.code
+                        .push(mk_unary(Operation::BorrowLoc, mut_ref_index, temp_index));
+
+                    for operand in operands {
+                        self.code.push(Bytecode::Call(
+                            attr_id,
+                            vec![],
+                            mk_vec_function_operation("push_back", vec![ty.clone()]),
+                            vec![mut_ref_index, operand],
+                            None,
+                        ));
+                    }
+                }
+            }
+            MoveBytecode::VecUnpack(sig, n) => {
+                let n = *n as usize;
+                let [ty]: [Type; 1] = self.get_type_params(*sig).try_into().unwrap();
+                let operand_index = self.temp_stack.pop().unwrap();
+                let temps = (0..n).map(|idx| self.temp_count + idx).collect::<Vec<_>>();
+                self.local_types.extend(vec![ty.clone(); n]);
+                self.temp_count += n;
+                self.temp_stack.extend(&temps);
+
+                if !temps.is_empty() {
+                    let mut_ref_index = self.temp_count;
+                    self.local_types.push(Type::Reference(
+                        true,
+                        Box::new(Type::Vector(Box::new(ty.clone()))),
+                    ));
+                    self.temp_count += 1;
+
+                    self.code
+                        .push(mk_unary(Operation::BorrowLoc, mut_ref_index, operand_index));
+
+                    for temp in temps {
+                        self.code.push(Bytecode::Call(
+                            attr_id,
+                            vec![temp],
+                            mk_vec_function_operation("pop_back", vec![ty.clone()]),
+                            vec![mut_ref_index],
+                            None,
+                        ));
+                    }
+                }
+
+                self.code.push(Bytecode::Call(
+                    attr_id,
+                    vec![],
+                    mk_vec_function_operation("destroy_empty", vec![ty]),
+                    vec![operand_index],
+                    None,
+                ))
+            }
         }
     }
 
     fn translate_value(ty: &Type, value: &MoveValue) -> Constant {
         match (ty, &value) {
-            (Type::Vector(inner), MoveValue::Vector(vs)) => {
-                let b = vs
-                    .iter()
-                    .map(|v| match Self::translate_value(inner, v) {
-                        Constant::U8(u) => u,
-                        _ => unimplemented!("Not yet supported constant vector type: {:?}", ty),
-                    })
-                    .collect::<Vec<u8>>();
-                Constant::ByteArray(b)
-            }
+            (Type::Vector(inner), MoveValue::Vector(vs)) => match **inner {
+                Type::Primitive(PrimitiveType::U8) => {
+                    let b = vs
+                        .iter()
+                        .map(|v| match Self::translate_value(inner, v) {
+                            Constant::U8(u) => u,
+                            _ => panic!("Expected u8, but found: {:?}", inner),
+                        })
+                        .collect::<Vec<u8>>();
+                    Constant::ByteArray(b)
+                }
+                Type::Primitive(PrimitiveType::Address) => {
+                    let b = vs
+                        .iter()
+                        .map(|v| match Self::translate_value(inner, v) {
+                            Constant::Address(a) => a,
+                            _ => panic!("Expected address, but found: {:?}", inner),
+                        })
+                        .collect::<Vec<BigUint>>();
+                    Constant::AddressArray(b)
+                }
+                _ => unimplemented!("Not yet supported constant vector type: {:?}", ty),
+            },
             (Type::Primitive(PrimitiveType::Bool), MoveValue::Bool(b)) => Constant::Bool(*b),
             (Type::Primitive(PrimitiveType::U8), MoveValue::U8(b)) => Constant::U8(*b),
             (Type::Primitive(PrimitiveType::U64), MoveValue::U64(b)) => Constant::U64(*b),

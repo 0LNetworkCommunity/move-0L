@@ -1,26 +1,34 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod compiler;
 
 pub const DEPENDENCY: &str = "dependency";
-pub const DEPENDENCY_SHORT: &str = "d";
+pub const DEPENDENCY_SHORT: char = 'd';
 
 pub const SENDER: &str = "sender";
-pub const SENDER_SHORT: &str = "s";
+pub const SENDER_SHORT: char = 's';
 
 pub const OUT_DIR: &str = "out-dir";
-pub const OUT_DIR_SHORT: &str = "o";
+pub const OUT_DIR_SHORT: char = 'o';
 pub const DEFAULT_OUTPUT_DIR: &str = "build";
 
-pub const NO_SHADOW: &str = "no-shadow";
-pub const NO_SHADOW_SHORT: &str = "S";
+pub const SHADOW: &str = "shadow";
+pub const SHADOW_SHORT: char = 'S';
 
 pub const SOURCE_MAP: &str = "source-map";
-pub const SOURCE_MAP_SHORT: &str = "m";
+pub const SOURCE_MAP_SHORT: char = 'm';
 
 pub const TEST: &str = "test";
-pub const TEST_SHORT: &str = "t";
+pub const TEST_SHORT: char = 't';
+
+pub const VERIFY: &str = "verify";
+pub const VERIFY_SHORT: char = 'v';
+
+pub const FLAVOR: &str = "flavor";
+
+pub const BYTECODE_VERSION: &str = "bytecode-version";
 
 pub const COLOR_MODE_ENV_VAR: &str = "COLOR_MODE";
 

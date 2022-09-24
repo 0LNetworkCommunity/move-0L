@@ -1,9 +1,12 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
+
+use std::{collections::BTreeMap, fs, path::Path};
 
 use move_command_line_common::{
     env::read_bool_env_var,
-    testing::{format_diff, read_env_update_baseline, EXP_EXT, OUT_EXT},
+    testing::{add_update_baseline_fix, format_diff, read_env_update_baseline, EXP_EXT, OUT_EXT},
 };
 use move_compiler::{
     compiled_unit::AnnotatedCompiledUnit,
@@ -11,20 +14,24 @@ use move_compiler::{
     shared::{Flags, NumericalAddress},
     unit_test, CommentMap, Compiler, SteppedCompiler, PASS_CFGIR, PASS_PARSER,
 };
-use std::{collections::BTreeMap, fs, path::Path};
 
 /// Shared flag to keep any temporary results of the test
 const KEEP_TMP: &str = "KEEP";
 
 const TEST_EXT: &str = "unit_test";
+const VERIFICATION_EXT: &str = "verification";
+
+/// Root of tests which require to set flavor flags.
+const FLAVOR_PATH: &str = "flavors/";
 
 fn default_testing_addresses() -> BTreeMap<String, NumericalAddress> {
     let mapping = [
-        ("Std", "0x1"),
+        ("std", "0x1"),
         ("M", "0x1"),
         ("A", "0x42"),
         ("B", "0x42"),
         ("K", "0x19"),
+        ("Async", "0x20"),
     ];
     mapping
         .iter()
@@ -54,9 +61,46 @@ fn move_check_testsuite(path: &Path) -> datatest_stable::Result<()> {
         )?;
     }
 
+    // A verification case is marked that it should also be compiled in verification mode by having
+    // a `path.verification` file.
+    if path.with_extension(VERIFICATION_EXT).exists() {
+        let verification_exp_path = format!(
+            "{}.verification.{}",
+            path.with_extension("").to_string_lossy(),
+            EXP_EXT
+        );
+        let verification_out_path = format!(
+            "{}.verification.{}",
+            path.with_extension("").to_string_lossy(),
+            OUT_EXT
+        );
+        run_test(
+            path,
+            Path::new(&verification_exp_path),
+            Path::new(&verification_out_path),
+            Flags::verification(),
+        )?;
+    }
+
     let exp_path = path.with_extension(EXP_EXT);
     let out_path = path.with_extension(OUT_EXT);
-    run_test(path, &exp_path, &out_path, Flags::empty())?;
+
+    let mut flags = Flags::empty();
+    match path.to_str() {
+        Some(p) if p.contains(FLAVOR_PATH) => {
+            // Extract the flavor from the path. Its the directory name of the file.
+            let flavor = path
+                .parent()
+                .expect("has parent")
+                .file_name()
+                .expect("has name")
+                .to_string_lossy()
+                .to_string();
+            flags = flags.set_flavor(flavor)
+        }
+        _ => {}
+    };
+    run_test(path, &exp_path, &out_path, flags)?;
     Ok(())
 }
 
@@ -64,11 +108,13 @@ fn move_check_testsuite(path: &Path) -> datatest_stable::Result<()> {
 fn run_test(path: &Path, exp_path: &Path, out_path: &Path, flags: Flags) -> anyhow::Result<()> {
     let targets: Vec<String> = vec![path.to_str().unwrap().to_owned()];
 
-    let (files, comments_and_compiler_res) =
-        Compiler::new(&targets, &move_stdlib::move_stdlib_files())
-            .set_flags(flags)
-            .set_named_address_values(default_testing_addresses())
-            .run::<PASS_PARSER>()?;
+    let (files, comments_and_compiler_res) = Compiler::from_files(
+        targets,
+        move_stdlib::move_stdlib_files(),
+        default_testing_addresses(),
+    )
+    .set_flags(flags)
+    .run::<PASS_PARSER>()?;
     let diags = move_check_for_errors(comments_and_compiler_res);
 
     let has_diags = !diags.is_empty();
@@ -103,14 +149,14 @@ fn run_test(path: &Path, exp_path: &Path, out_path: &Path, flags: Flags) -> anyh
                 "Expected success. Unexpected diagnostics:\n{}",
                 rendered_diags
             );
-            anyhow::bail!(msg)
+            anyhow::bail!(add_update_baseline_fix(msg))
         }
         (false, true) => {
             let msg = format!(
                 "Unexpected success. Expected diagnostics:\n{}",
                 fs::read_to_string(exp_path)?
             );
-            anyhow::bail!(msg)
+            anyhow::bail!(add_update_baseline_fix(msg))
         }
         (true, true) => {
             let expected_diags = fs::read_to_string(exp_path)?;
@@ -119,7 +165,7 @@ fn run_test(path: &Path, exp_path: &Path, out_path: &Path, flags: Flags) -> anyh
                     "Expected diagnostics differ from actual diagnostics:\n{}",
                     format_diff(expected_diags, rendered_diags),
                 );
-                anyhow::bail!(msg)
+                anyhow::bail!(add_update_baseline_fix(msg))
             } else {
                 Ok(())
             }
@@ -140,7 +186,7 @@ fn move_check_for_errors(
         let (mut compiler, cfgir) = compiler.run::<PASS_CFGIR>()?.into_ast();
         let compilation_env = compiler.compilation_env();
         if compilation_env.flags().is_testing() {
-            unit_test::plan_builder::construct_test_plan(compilation_env, &cfgir);
+            unit_test::plan_builder::construct_test_plan(compilation_env, None, &cfgir);
         }
 
         let (units, diags) = compiler.at_cfgir(cfgir).build()?;

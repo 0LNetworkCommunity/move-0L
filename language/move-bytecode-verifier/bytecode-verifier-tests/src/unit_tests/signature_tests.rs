@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use invalid_mutations::signature::{FieldRefMutation, SignatureRefMutation};
@@ -93,11 +94,13 @@ fn no_verify_locals_good() {
         ],
         address_identifiers: vec![AccountAddress::new([0; AccountAddress::LENGTH])],
         constant_pool: vec![],
+        metadata: vec![],
         struct_defs: vec![],
         function_defs: vec![
             FunctionDefinition {
                 function: FunctionHandleIndex(0),
                 visibility: Visibility::Public,
+                is_entry: false,
                 acquires_global_resources: vec![],
                 code: Some(CodeUnit {
                     locals: SignatureIndex(0),
@@ -107,6 +110,7 @@ fn no_verify_locals_good() {
             FunctionDefinition {
                 function: FunctionHandleIndex(1),
                 visibility: Visibility::Public,
+                is_entry: false,
                 acquires_global_resources: vec![],
                 code: Some(CodeUnit {
                     locals: SignatureIndex(1),

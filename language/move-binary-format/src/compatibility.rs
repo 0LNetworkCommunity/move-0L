@@ -1,8 +1,10 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     file_format::{AbilitySet, StructTypeParameter, Visibility},
+    file_format_common::VERSION_5,
     normalized::Module,
 };
 use std::collections::BTreeSet;
@@ -13,6 +15,7 @@ use std::collections::BTreeSet;
 /// `{ struct_and_function_linking: true, struct_layout: false }`: Dependent modules that reference functions or types in this module may not link. However, fixing, recompiling, and redeploying all dependent modules will work--no data migration needed.
 /// `{ type_and_function_linking: true, struct_layout: false }`: Attempting to read structs published by this module will now fail at runtime. However, dependent modules will continue to link. Requires data migration, but no changes to dependent modules.
 /// `{ type_and_function_linking: false, struct_layout: false }`: Everything is broken. Need both a data migration and changes to dependent modules.
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub struct Compatibility {
     /// If false, dependent modules that reference functions or structs in this module may not link
     pub struct_and_function_linking: bool,
@@ -28,7 +31,11 @@ impl Compatibility {
     }
 
     /// Return compatibility assessment for `new_module` relative to old module `old_module`.
-    pub fn check(old_module: &Module, new_module: &Module) -> Compatibility {
+    pub fn check(
+        treat_friend_as_private: bool,
+        old_module: &Module,
+        new_module: &Module,
+    ) -> Compatibility {
         let mut struct_and_function_linking = true;
         let mut struct_layout = true;
 
@@ -99,6 +106,9 @@ impl Compatibility {
         // friend list. But for simplicity, we decided to go to the more restrictive form now and
         // we may revisit this in the future.
         for (name, old_func) in &old_module.exposed_functions {
+            if treat_friend_as_private && matches!(old_func.visibility, Visibility::Friend) {
+                continue;
+            }
             let new_func = match new_module.exposed_functions.get(name) {
                 Some(new_func) => new_func,
                 None => {
@@ -107,16 +117,29 @@ impl Compatibility {
                 }
             };
             let is_vis_compatible = match (old_func.visibility, new_func.visibility) {
+                // public must remain public
                 (Visibility::Public, Visibility::Public) => true,
                 (Visibility::Public, _) => false,
-                (Visibility::Script, Visibility::Script) => true,
-                (Visibility::Script, _) => false,
+                // friend can become public or remain friend
                 (Visibility::Friend, Visibility::Public)
                 | (Visibility::Friend, Visibility::Friend) => true,
                 (Visibility::Friend, _) => false,
-                (Visibility::Private, _) => unreachable!("A private function can never be exposed"),
+                // private can become public or friend, or stay private
+                (Visibility::Private, _) => true,
+            };
+            let is_entry_compatible = if old_module.file_format_version < VERSION_5
+                && new_module.file_format_version < VERSION_5
+            {
+                // if it was public(script), it must remain pubic(script)
+                // if it was not public(script), it _cannot_ become public(script)
+                old_func.is_entry == new_func.is_entry
+            } else {
+                // If it was an entry function, it must remain one.
+                // If it was not an entry function, it is allowed to become one.
+                !old_func.is_entry || new_func.is_entry
             };
             if !is_vis_compatible
+                || !is_entry_compatible
                 || old_func.parameters != new_func.parameters
                 || old_func.return_ != new_func.return_
                 || !fun_type_parameters_compatibile(
@@ -128,18 +151,17 @@ impl Compatibility {
             }
         }
 
-        // check friend declarations compatibility
-        //
-        // - additions to the list are allowed
-        // - removals are not allowed
-        //
-        // NOTE: we may also relax this checking a bit in the future: we may allow the removal of
-        // a module removed from the friend list if the module does not call any friend function
-        // in this module.
-        let old_friend_module_ids: BTreeSet<_> = old_module.friends.iter().cloned().collect();
-        let new_friend_module_ids: BTreeSet<_> = new_module.friends.iter().cloned().collect();
-        if !old_friend_module_ids.is_subset(&new_friend_module_ids) {
-            struct_and_function_linking = false;
+        if !treat_friend_as_private {
+            // check friend declarations compatibility
+            //
+            // - additions to the list are allowed
+            // - removals are not allowed
+            //
+            let old_friend_module_ids: BTreeSet<_> = old_module.friends.iter().cloned().collect();
+            let new_friend_module_ids: BTreeSet<_> = new_module.friends.iter().cloned().collect();
+            if !old_friend_module_ids.is_subset(&new_friend_module_ids) {
+                struct_and_function_linking = false;
+            }
         }
 
         Compatibility {

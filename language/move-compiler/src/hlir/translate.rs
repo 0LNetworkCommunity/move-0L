@@ -1,10 +1,11 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     diag,
     expansion::ast::{self as E, AbilitySet, Fields, ModuleIdent},
-    hlir::ast::{self as H, Block},
+    hlir::ast::{self as H, Block, MoveOpAnnotation},
     naming::ast as N,
     parser::ast::{BinOp_, ConstantName, Field, FunctionName, StructName, Var},
     shared::{unique_map::UniqueMap, *},
@@ -50,7 +51,7 @@ pub fn display_var(s: Symbol) -> DisplayVar {
         DisplayVar::Tmp
     } else {
         let mut orig = s.as_str().to_string();
-        orig.truncate(orig.find('#').unwrap_or_else(|| s.len()));
+        orig.truncate(orig.find('#').unwrap_or(s.len()));
         DisplayVar::Orig(orig)
     }
 }
@@ -185,6 +186,7 @@ fn module(
     mdef: T::ModuleDefinition,
 ) -> (ModuleIdent, H::ModuleDefinition) {
     let T::ModuleDefinition {
+        package_name,
         attributes,
         is_source_module,
         dependency_order,
@@ -204,6 +206,7 @@ fn module(
     (
         module_ident,
         H::ModuleDefinition {
+            package_name,
             attributes,
             is_source_module,
             dependency_order,
@@ -227,6 +230,7 @@ fn scripts(
 
 fn script(context: &mut Context, tscript: T::Script) -> H::Script {
     let T::Script {
+        package_name,
         attributes,
         loc,
         constants: tconstants,
@@ -236,8 +240,8 @@ fn script(context: &mut Context, tscript: T::Script) -> H::Script {
     let constants = tconstants.map(|name, c| constant(context, name, c));
     let function = function(context, function_name, tfunction);
     H::Script {
+        package_name,
         attributes,
-
         loc,
         constants,
         function_name,
@@ -252,14 +256,20 @@ fn script(context: &mut Context, tscript: T::Script) -> H::Script {
 fn function(context: &mut Context, _name: FunctionName, f: T::Function) -> H::Function {
     assert!(context.has_empty_locals());
     assert!(context.tmp_counter == 0);
-    let attributes = f.attributes;
-    let visibility = f.visibility;
-    let signature = function_signature(context, f.signature);
-    let acquires = f.acquires;
-    let body = function_body(context, &signature, f.body);
+    let T::Function {
+        attributes,
+        visibility,
+        entry,
+        signature,
+        acquires,
+        body,
+    } = f;
+    let signature = function_signature(context, signature);
+    let body = function_body(context, &signature, body);
     H::Function {
         attributes,
         visibility,
+        entry,
         signature,
         acquires,
         body,
@@ -1125,10 +1135,17 @@ fn exp_impl(
             // Currently only private constants exist
             HE::Constant(c)
         }
-        TE::Move { from_user, var } => HE::Move {
-            from_user,
-            var: context.remapped_local(var),
-        },
+        TE::Move { from_user, var } => {
+            let annotation = if from_user {
+                MoveOpAnnotation::FromUser
+            } else {
+                MoveOpAnnotation::InferredNoCopy
+            };
+            HE::Move {
+                annotation,
+                var: context.remapped_local(var),
+            }
+        }
         TE::Copy { from_user, var } => HE::Copy {
             from_user,
             var: context.remapped_local(var),
@@ -1287,7 +1304,7 @@ fn exp_impl(
             let eb = exp_(context, result, None, *te);
             let tmp = match bind_exp_impl(context, result, eb, true).exp.value {
                 HE::Move {
-                    from_user: false,
+                    annotation: MoveOpAnnotation::InferredLastUsage,
                     var,
                 } => var,
                 _ => panic!("ICE invalid bind_exp for single value"),
@@ -1453,7 +1470,7 @@ fn bind_exp_impl_(
 fn use_tmp(var: Var) -> H::UnannotatedExp_ {
     use H::UnannotatedExp_ as E;
     E::Move {
-        from_user: false,
+        annotation: MoveOpAnnotation::InferredLastUsage,
         var,
     }
 }
@@ -1506,12 +1523,12 @@ fn builtin(
     }
 }
 
-fn value(context: &mut Context, sp!(loc, ev_): E::Value) -> H::Value {
+fn value(_context: &mut Context, sp!(loc, ev_): E::Value) -> H::Value {
     use E::Value_ as EV;
     use H::Value_ as HV;
     let v_ = match ev_ {
         EV::InferredNum(_) => panic!("ICE should have been expanded"),
-        EV::Address(a) => HV::Address(a.into_addr_bytes(context.env.named_address_mapping())),
+        EV::Address(a) => HV::Address(a.into_addr_bytes()),
         EV::U8(u) => HV::U8(u),
         EV::U64(u) => HV::U64(u),
         EV::U128(u) => HV::U128(u),
@@ -1958,7 +1975,7 @@ fn remove_unused_bindings_command(unused: &BTreeSet<Var>, sp!(_, c_): &mut H::Co
     }
 }
 
-fn remove_unused_bindings_lvalues(unused: &BTreeSet<Var>, ls: &mut Vec<H::LValue>) {
+fn remove_unused_bindings_lvalues(unused: &BTreeSet<Var>, ls: &mut [H::LValue]) {
     ls.iter_mut()
         .for_each(|l| remove_unused_bindings_lvalue(unused, l))
 }

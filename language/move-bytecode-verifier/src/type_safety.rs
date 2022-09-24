@@ -1,10 +1,10 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! This module defines the transfer functions for verifying type safety of a procedure body.
 //! It does not utilize control flow, but does check each block independently
 
-use mirai_annotations::*;
 use move_binary_format::{
     binary_views::{BinaryIndexedView, FunctionView},
     control_flow_graph::ControlFlowGraph,
@@ -722,7 +722,10 @@ fn verify_instr(
         Bytecode::VecPack(idx, num) => {
             let element_type = &verifier.resolver.signature_at(*idx).0[0];
             for _ in 0..*num {
-                verifier.stack.pop().unwrap();
+                let operand_type = verifier.stack.pop().unwrap();
+                if element_type != &operand_type {
+                    return Err(verifier.error(StatusCode::TYPE_MISMATCH, offset));
+                }
             }
             verifier
                 .stack
@@ -837,7 +840,7 @@ fn instantiate(token: &SignatureToken, subst: &Signature) -> SignatureToken {
         TypeParameter(idx) => {
             // Assume that the caller has previously parsed and verified the structure of the
             // file and that this guarantees that type parameter indices are always in bounds.
-            assume!((*idx as usize) < subst.len());
+            debug_assert!((*idx as usize) < subst.len());
             subst.0[*idx as usize].clone()
         }
     }

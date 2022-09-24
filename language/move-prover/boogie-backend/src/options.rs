@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::anyhow;
@@ -18,8 +19,8 @@ const DEFAULT_BOOGIE_FLAGS: &[&str] = &[
     "-proverOpt:O:model_validate=true",
 ];
 
-const MIN_BOOGIE_VERSION: &str = "2.9.0";
-const MIN_Z3_VERSION: &str = "4.8.9";
+const MIN_BOOGIE_VERSION: &str = "2.15.7";
+const MIN_Z3_VERSION: &str = "4.10.2";
 const MIN_CVC5_VERSION: &str = "0.0.3";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -38,6 +39,16 @@ impl VectorTheory {
             VectorTheory::BoogieArrayIntern | VectorTheory::SmtArrayExt | VectorTheory::SmtSeq
         )
     }
+}
+
+/// Options to define custom native functions to include in generated Boogie file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomNativeOptions {
+    /// Bytes of the custom template.
+    pub template_bytes: Vec<u8>,
+    /// List of (module name, module instance key) tuples, used to generate instantiated
+    /// versions of generic native functions.
+    pub module_instance_names: Vec<(String, String)>,
 }
 
 /// Boogie options.
@@ -105,6 +116,10 @@ pub struct BoogieOptions {
     pub vector_theory: VectorTheory,
     /// Whether to generate a z3 trace file and where to put it.
     pub z3_trace_file: Option<String>,
+    /// Options to define user-custom native funs.
+    pub custom_natives: Option<CustomNativeOptions>,
+    /// Number of iterations to unroll loops.
+    pub loop_unroll: Option<u64>,
 }
 
 impl Default for BoogieOptions {
@@ -139,6 +154,8 @@ impl Default for BoogieOptions {
             hard_timeout_secs: 0,
             vector_theory: VectorTheory::BoogieArray,
             z3_trace_file: None,
+            custom_natives: None,
+            loop_unroll: None,
         }
     }
 }
@@ -191,6 +208,9 @@ impl BoogieOptions {
                 "-proverOpt:O:smt.QI.LAZY_THRESHOLD={}",
                 self.lazy_threshold
             )]);
+        }
+        if let Some(iters) = self.loop_unroll {
+            add(&[&format!("-loopUnroll:{}", iters)]);
         }
         add(&[&format!(
             "-vcsCores:{}",
@@ -305,6 +325,9 @@ impl BoogieOptions {
                     given,
                     tool
                 ));
+            }
+            if gn > en {
+                break;
             }
         }
         Ok(())

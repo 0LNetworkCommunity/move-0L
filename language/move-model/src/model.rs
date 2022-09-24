@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Provides a model for a set of Move modules (and scripts, which
@@ -31,15 +32,15 @@ use codespan_reporting::{
 use itertools::Itertools;
 #[allow(unused_imports)]
 use log::{info, warn};
-use move_command_line_common::files::FileHash;
 use num::{BigUint, One, ToPrimitive};
 use serde::{Deserialize, Serialize};
 
+pub use move_binary_format::file_format::{AbilitySet, Visibility as FunctionVisibility};
 use move_binary_format::{
     access::ModuleAccess,
     binary_views::BinaryIndexedView,
     file_format::{
-        AddressIdentifierIndex, Bytecode, Constant as VMConstant, ConstantPoolIndex,
+        AddressIdentifierIndex, Bytecode, CodeOffset, Constant as VMConstant, ConstantPoolIndex,
         FunctionDefinitionIndex, FunctionHandleIndex, SignatureIndex, SignatureToken,
         StructDefinitionIndex, StructFieldInformation, StructHandleIndex, Visibility,
     },
@@ -51,16 +52,21 @@ use move_binary_format::{
     CompiledModule,
 };
 use move_bytecode_source_map::{mapping::SourceMapping, source_map::SourceMap};
+use move_command_line_common::{address::NumericalAddress, files::FileHash};
 use move_core_types::{
-    account_address::AccountAddress, identifier::Identifier, language_storage, value::MoveValue,
+    account_address::AccountAddress,
+    identifier::{IdentStr, Identifier},
+    language_storage,
+    value::MoveValue,
 };
 use move_disassembler::disassembler::{Disassembler, DisassemblerOptions};
 
 use crate::{
     ast::{
-        ConditionKind, Exp, ExpData, GlobalInvariant, ModuleName, PropertyBag, PropertyValue, Spec,
-        SpecBlockInfo, SpecFunDecl, SpecVarDecl, Value,
+        Attribute, ConditionKind, Exp, ExpData, GlobalInvariant, ModuleName, PropertyBag,
+        PropertyValue, Spec, SpecBlockInfo, SpecFunDecl, SpecVarDecl, Value,
     },
+    intrinsics::IntrinsicsAnnotation,
     pragmas::{
         DELEGATE_INVARIANTS_TO_CALLER_PRAGMA, DISABLE_INVARIANTS_IN_BODY_PRAGMA, FRIEND_PRAGMA,
         INTRINSIC_PRAGMA, OPAQUE_PRAGMA, VERIFY_PRAGMA,
@@ -68,11 +74,6 @@ use crate::{
     symbol::{Symbol, SymbolPool},
     ty::{PrimitiveType, Type, TypeDisplayContext, TypeUnificationAdapter, Variance},
 };
-
-// import and re-expose symbols
-use crate::ast::Attribute;
-use move_binary_format::file_format::CodeOffset;
-pub use move_binary_format::file_format::{AbilitySet, Visibility as FunctionVisibility};
 
 // =================================================================================================
 /// # Constants
@@ -220,6 +221,10 @@ pub struct NodeId(usize);
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct GlobalId(usize);
 
+/// Identifier for an intrinsic declaration, relative globally in `GlobalEnv`.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub struct IntrinsicId(usize);
+
 /// Some identifier qualified by a module.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct QualifiedId<Id> {
@@ -325,16 +330,6 @@ impl ModuleId {
     }
 }
 
-impl GlobalId {
-    pub fn new(idx: usize) -> Self {
-        Self(idx)
-    }
-
-    pub fn as_usize(self) -> usize {
-        self.0
-    }
-}
-
 impl ModuleId {
     pub fn qualified<Id>(self, id: Id) -> QualifiedId<Id> {
         QualifiedId {
@@ -349,6 +344,26 @@ impl ModuleId {
             inst,
             id,
         }
+    }
+}
+
+impl GlobalId {
+    pub fn new(idx: usize) -> Self {
+        Self(idx)
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
+impl IntrinsicId {
+    pub fn new(idx: usize) -> Self {
+        Self(idx)
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0
     }
 }
 
@@ -402,7 +417,7 @@ impl QualifiedInstId<StructId> {
 /// # Verification Scope
 
 /// Defines what functions to verify.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerificationScope {
     /// Verify only public functions.
     Public,
@@ -456,6 +471,8 @@ pub struct GlobalEnv {
     /// A mapping from file hash to file name and associated FileId. Though this information is
     /// already in `source_files`, we can't get it out of there so need to book keep here.
     file_hash_map: BTreeMap<FileHash, (String, FileId)>,
+    /// A mapping from file id to associated alias map.
+    file_alias_map: BTreeMap<FileId, Rc<BTreeMap<Symbol, NumericalAddress>>>,
     /// Bijective mapping between FileId and a plain int. FileId's are themselves wrappers around
     /// ints, but the inner representation is opaque and cannot be accessed. This is used so we
     /// can emit FileId's to generated code and read them back.
@@ -493,8 +510,13 @@ pub struct GlobalEnv {
     /// are represented without type instantiation because we assume the backend can handle
     /// generics in the expression language.
     pub used_spec_funs: BTreeSet<QualifiedId<SpecFunId>>,
+    /// An annotation of all intrinsic declarations
+    pub intrinsics: IntrinsicsAnnotation,
     /// A type-indexed container for storing extension data in the environment.
     extensions: RefCell<BTreeMap<TypeId, Box<dyn Any>>>,
+    /// The address of the standard and extension libaries.
+    stdlib_address: Option<BigUint>,
+    extlib_address: Option<BigUint>,
 }
 
 /// Struct a helper type for implementing fmt::Display depending on GlobalEnv
@@ -532,6 +554,7 @@ impl GlobalEnv {
             unknown_move_ir_loc,
             internal_loc,
             file_hash_map,
+            file_alias_map: BTreeMap::new(),
             file_id_to_idx,
             file_idx_to_id,
             file_id_is_dep: BTreeSet::new(),
@@ -544,7 +567,10 @@ impl GlobalEnv {
             global_invariants: Default::default(),
             global_invariants_for_memory: Default::default(),
             used_spec_funs: BTreeSet::new(),
+            intrinsics: Default::default(),
             extensions: Default::default(),
+            stdlib_address: None,
+            extlib_address: None,
         }
     }
 
@@ -628,11 +654,20 @@ impl GlobalEnv {
     pub fn add_source(
         &mut self,
         file_hash: FileHash,
+        address_aliases: Rc<BTreeMap<Symbol, NumericalAddress>>,
         file_name: &str,
         source: &str,
         is_dep: bool,
     ) -> FileId {
         let file_id = self.source_files.add(file_name, source.to_string());
+        self.stdlib_address =
+            self.resolve_std_address_alias(self.stdlib_address.clone(), "std", &address_aliases);
+        self.extlib_address = self.resolve_std_address_alias(
+            self.extlib_address.clone(),
+            "Extensions",
+            &address_aliases,
+        );
+        self.file_alias_map.insert(file_id, address_aliases);
         self.file_hash_map
             .insert(file_hash, (file_name.to_string(), file_id));
         let file_idx = self.file_id_to_idx.len() as u16;
@@ -642,6 +677,33 @@ impl GlobalEnv {
             self.file_id_is_dep.insert(file_id);
         }
         file_id
+    }
+
+    fn resolve_std_address_alias(
+        &self,
+        def: Option<BigUint>,
+        name: &str,
+        aliases: &BTreeMap<Symbol, NumericalAddress>,
+    ) -> Option<BigUint> {
+        let name_sym = self.symbol_pool().make(name);
+        if let Some(a) = aliases.get(&name_sym) {
+            let addr = BigUint::from_bytes_be(a.as_ref());
+            if matches!(&def, Some(other_addr) if &addr != other_addr) {
+                self.error(
+                    &self.unknown_loc,
+                    &format!(
+                        "Ambiguous definition of standard address alias `{}` (`0x{} != 0x{}`).\
+                                 This alias currently must be unique across all packages.",
+                        name,
+                        addr,
+                        def.unwrap()
+                    ),
+                );
+            }
+            Some(addr)
+        } else {
+            def
+        }
     }
 
     /// Find all target modules and return in a vector
@@ -821,6 +883,20 @@ impl GlobalEnv {
             .collect()
     }
 
+    /// Return the source file ids.
+    pub fn get_source_file_ids(&self) -> Vec<FileId> {
+        self.file_hash_map
+            .iter()
+            .filter_map(|(_, (k, id))| {
+                if k.eq("<internal>") || k.eq("<unknown>") {
+                    None
+                } else {
+                    Some(*id)
+                }
+            })
+            .collect()
+    }
+
     // Gets the number of source files in this environment.
     pub fn get_file_count(&self) -> usize {
         self.file_hash_map.len()
@@ -978,7 +1054,7 @@ impl GlobalEnv {
             let struct_env = module_env.get_struct(*sid);
             let module_name = module_env.get_name();
             module_name.addr() == &BigUint::one()
-                && &*self.symbol_pool.string(module_name.name()) == "Event"
+                && &*self.symbol_pool.string(module_name.name()) == "event"
                 && &*self.symbol_pool.string(struct_env.get_name()) == "EventHandle"
         } else {
             false
@@ -1227,11 +1303,10 @@ impl GlobalEnv {
     pub fn find_function_by_language_storage_id_name(
         &self,
         id: &language_storage::ModuleId,
-        name: &Identifier,
+        name: &IdentStr,
     ) -> Option<FunctionEnv<'_>> {
         self.find_module_by_language_storage_id(id)
-            .map(|menv| menv.find_function(menv.symbol_pool().make(name.as_str())))
-            .flatten()
+            .and_then(|menv| menv.find_function(menv.symbol_pool().make(name.as_str())))
     }
 
     /// Gets a StructEnv in this module by its `StructTag`
@@ -1240,11 +1315,10 @@ impl GlobalEnv {
         tag: &language_storage::StructTag,
     ) -> Option<QualifiedId<StructId>> {
         self.find_module(&self.to_module_name(&tag.module_id()))
-            .map(|menv| {
+            .and_then(|menv| {
                 menv.find_struct_by_identifier(tag.name.clone())
                     .map(|sid| menv.get_id().qualified(sid))
             })
-            .flatten()
     }
 
     /// Return the module enclosing this location.
@@ -1370,7 +1444,7 @@ impl GlobalEnv {
     }
 
     /// Converts a storage module id into an AST module name.
-    fn to_module_name(&self, storage_id: &language_storage::ModuleId) -> ModuleName {
+    pub fn to_module_name(&self, storage_id: &language_storage::ModuleId) -> ModuleName {
         ModuleName::from_str(
             &storage_id.address().to_string(),
             self.symbol_pool.make(storage_id.name().as_str()),
@@ -1504,8 +1578,7 @@ impl GlobalEnv {
 
     /// Gets the type parameter instantiation associated with the given node.
     pub fn get_node_instantiation(&self, node_id: NodeId) -> Vec<Type> {
-        self.get_node_instantiation_opt(node_id)
-            .unwrap_or_else(Vec::new)
+        self.get_node_instantiation_opt(node_id).unwrap_or_default()
     }
 
     /// Gets the type parameter instantiation associated with the given node, if it is available.
@@ -1575,13 +1648,12 @@ impl GlobalEnv {
             .module_data
             .iter_mut()
             .filter(|m| m.id == fid.module_id)
-            .map(|m| {
+            .flat_map(|m| {
                 m.function_data
                     .iter_mut()
                     .filter(|(k, _)| **k == fid.id)
                     .map(|(_, v)| v)
             })
-            .flatten()
             .exactly_one()
             .unwrap_or_else(|_| {
                 panic!("Expect one and only one function for {:?}", fid);
@@ -1600,18 +1672,35 @@ impl GlobalEnv {
             .module_data
             .iter_mut()
             .filter(|m| m.id == fid.module_id)
-            .map(|m| {
+            .flat_map(|m| {
                 m.function_data
                     .iter_mut()
                     .filter(|(k, _)| **k == fid.id)
                     .map(|(_, v)| v)
             })
-            .flatten()
             .exactly_one()
             .unwrap_or_else(|_| {
                 panic!("Expect one and only one function for {:?}", fid);
             });
         func_data.spec.on_impl.insert(code_offset, spec);
+    }
+
+    /// Produce a TypeDisplayContext to print types within the scope of this env
+    pub fn get_type_display_ctx(&self) -> TypeDisplayContext {
+        TypeDisplayContext::WithEnv {
+            env: self,
+            type_param_names: None,
+        }
+    }
+
+    /// Returns the address where the standard lib is defined.
+    pub fn get_stdlib_address(&self) -> BigUint {
+        self.stdlib_address.clone().unwrap_or_else(|| 1u16.into())
+    }
+
+    /// Returns the address where the extensions libs are defined.
+    pub fn get_extlib_address(&self) -> BigUint {
+        self.extlib_address.clone().unwrap_or_else(|| 2u16.into())
     }
 }
 
@@ -2111,13 +2200,13 @@ impl<'env> ModuleEnv<'env> {
             SignatureToken::Address => Type::Primitive(PrimitiveType::Address),
             SignatureToken::Signer => Type::Primitive(PrimitiveType::Signer),
             SignatureToken::Reference(t) => {
-                Type::Reference(false, Box::new(self.globalize_signature(&*t)))
+                Type::Reference(false, Box::new(self.globalize_signature(t)))
             }
             SignatureToken::MutableReference(t) => {
-                Type::Reference(true, Box::new(self.globalize_signature(&*t)))
+                Type::Reference(true, Box::new(self.globalize_signature(t)))
             }
             SignatureToken::TypeParameter(index) => Type::TypeParameter(*index),
-            SignatureToken::Vector(bt) => Type::Vector(Box::new(self.globalize_signature(&*bt))),
+            SignatureToken::Vector(bt) => Type::Vector(Box::new(self.globalize_signature(bt))),
             SignatureToken::Struct(handle_idx) => {
                 let struct_view = StructHandleView::new(
                     &self.data.module,
@@ -2354,6 +2443,15 @@ impl<'env> StructEnv<'env> {
         )
     }
 
+    /// Gets full name with module address as string.
+    pub fn get_full_name_with_address(&self) -> String {
+        format!(
+            "{}::{}",
+            self.module_env.get_full_name_str(),
+            self.get_name().display(self.symbol_pool())
+        )
+    }
+
     /// Returns the VM identifier for this struct
     pub fn get_identifier(&self) -> Option<Identifier> {
         match &self.data.info {
@@ -2417,11 +2515,18 @@ impl<'env> StructEnv<'env> {
         }
     }
 
-    /// Determines whether this struct is the well-known vector type.
-    pub fn is_vector(&self) -> bool {
-        let name = self.symbol_pool().string(self.module_env.get_name().name());
-        let addr = self.module_env.get_name().addr();
-        name.as_ref() == "Vector" && addr == &BigUint::from(0_u64)
+    /// Returns true if this struct has the pragma intrinsic set to true.
+    pub fn is_intrinsic(&self) -> bool {
+        self.is_pragma_true(INTRINSIC_PRAGMA, || false)
+    }
+
+    /// Returns true if this is an intrinsic struct of a given name
+    pub fn is_intrinsic_of(&self, name: &str) -> bool {
+        self.module_env.env.intrinsics.is_intrinsic_of_for_struct(
+            self.symbol_pool(),
+            &self.get_qualified_id(),
+            name,
+        )
     }
 
     /// Returns true if this struct is ghost memory for a specification variable.
@@ -2616,7 +2721,7 @@ impl<'env> StructEnv<'env> {
 
     /// Returns true if this struct is native or marked as intrinsic.
     pub fn is_native_or_intrinsic(&self) -> bool {
-        self.is_native() || self.is_pragma_true(INTRINSIC_PRAGMA, || false)
+        self.is_native() || self.is_intrinsic()
     }
 }
 
@@ -2827,6 +2932,7 @@ pub struct FunctionData {
     arg_names: Vec<Symbol>,
 
     /// List of type argument names. Not in bytecode but obtained from AST.
+    #[allow(unused)]
     type_arg_names: Vec<Symbol>,
 
     /// Specification associated with this function.
@@ -3066,8 +3172,30 @@ impl<'env> FunctionEnv<'env> {
         self.is_pragma_true(INTRINSIC_PRAGMA, || false)
     }
 
+    /// Returns true if function is either native or intrinsic.
     pub fn is_native_or_intrinsic(&self) -> bool {
         self.is_native() || self.is_intrinsic()
+    }
+
+    /// Returns true if this is an intrinsic struct of a given name
+    pub fn is_intrinsic_of(&self, name: &str) -> bool {
+        self.module_env.env.intrinsics.is_intrinsic_of_for_move_fun(
+            self.symbol_pool(),
+            &self.get_qualified_id(),
+            name,
+        )
+    }
+
+    /// Returns true if this is the well-known native or intrinsic function of the given name.
+    /// The function must reside either in stdlib or extlib address domain.
+    pub fn is_well_known(&self, name: &str) -> bool {
+        let env = self.module_env.env;
+        if !self.is_native_or_intrinsic() {
+            return false;
+        }
+        let addr = self.module_env.get_name().addr();
+        (addr == &env.get_stdlib_address() || addr == &env.get_extlib_address())
+            && self.get_full_name_str() == name
     }
 
     /// Returns true if this function is opaque.
@@ -3080,12 +3208,16 @@ impl<'env> FunctionEnv<'env> {
         self.definition_view().visibility()
     }
 
+    /// Return true if the function is an entry fucntion
+    pub fn is_entry(&self) -> bool {
+        self.definition_view().is_entry()
+    }
+
     /// Return the visibility string for this function. Useful for formatted printing.
     pub fn visibility_str(&self) -> &str {
         match self.visibility() {
             Visibility::Public => "public ",
             Visibility::Friend => "public(friend) ",
-            Visibility::Script => "public(script) ",
             Visibility::Private => "",
         }
     }
@@ -3093,8 +3225,9 @@ impl<'env> FunctionEnv<'env> {
     /// Return whether this function is exposed outside of the module.
     pub fn is_exposed(&self) -> bool {
         self.module_env.is_script_module()
+            || self.definition_view().is_entry()
             || match self.definition_view().visibility() {
-                Visibility::Public | Visibility::Script | Visibility::Friend => true,
+                Visibility::Public | Visibility::Friend => true,
                 Visibility::Private => false,
             }
     }
@@ -3102,8 +3235,9 @@ impl<'env> FunctionEnv<'env> {
     /// Return whether this function is exposed outside of the module.
     pub fn has_unknown_callers(&self) -> bool {
         self.module_env.is_script_module()
+            || self.definition_view().is_entry()
             || match self.definition_view().visibility() {
-                Visibility::Public | Visibility::Script => true,
+                Visibility::Public => true,
                 Visibility::Private | Visibility::Friend => false,
             }
     }
@@ -3111,8 +3245,7 @@ impl<'env> FunctionEnv<'env> {
     /// Returns true if the function is a script function
     pub fn is_script(&self) -> bool {
         // The main function of a scipt is a script function
-        self.module_env.is_script_module()
-            || self.definition_view().visibility() == Visibility::Script
+        self.module_env.is_script_module() || self.definition_view().is_entry()
     }
 
     /// Return true if this function is a friend function
@@ -3527,7 +3660,7 @@ impl<'env> FunctionEnv<'env> {
     }
 
     /// Produce a TypeDisplayContext to print types within the scope of this env
-    pub fn get_type_display_ctxt(&self) -> TypeDisplayContext {
+    pub fn get_type_display_ctx(&self) -> TypeDisplayContext {
         let type_param_names = self
             .get_type_parameters()
             .iter()

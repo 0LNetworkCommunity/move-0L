@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -10,19 +11,23 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Result};
 use move_binary_format::file_format::CompiledModule;
+use move_command_line_common::env::get_bytecode_version_from_env;
 use move_core_types::{
     account_address::AccountAddress,
     errmap::ErrorMapping,
     identifier::IdentStr,
     language_storage::TypeTag,
     transaction_argument::{convert_txn_args, TransactionArgument},
+    value::MoveValue,
 };
 use move_package::compilation::compiled_package::CompiledPackage;
 use move_vm_runtime::move_vm::MoveVM;
+use move_vm_test_utils::gas_schedule::CostTable;
 use std::{fs, path::Path};
 
 pub fn run(
     natives: impl IntoIterator<Item = NativeFunctionRecord>,
+    cost_table: &CostTable,
     error_descriptions: &ErrorMapping,
     state: &OnDiskStateView,
     package: &CompiledPackage,
@@ -38,6 +43,7 @@ pub fn run(
     if !script_path.exists() {
         bail!("Script file {:?} does not exist", script_path)
     };
+    let bytecode_version = get_bytecode_version_from_env();
 
     let bytecode = if is_bytecode_file(script_path) {
         assert!(
@@ -50,12 +56,13 @@ move run` must be applied to a module inside `storage/`",
         fs::read(script_path)?
     } else {
         // TODO(tzakian): support calling scripts in transitive deps
+        let file_contents = std::fs::read_to_string(script_path)?;
         let script_opt = package
             .scripts()
-            .find(|unit| unit.source_path.file_stem() == script_path.file_stem());
+            .find(|unit| unit.unit.source_map().check(&file_contents));
         // script source file; package is already compiled so load it up
         match script_opt {
-            Some(unit) => unit.unit.serialize(),
+            Some(unit) => unit.unit.serialize(bytecode_version),
             None => bail!("Unable to find script in file {:?}", script_path),
         }
     };
@@ -68,32 +75,38 @@ move run` must be applied to a module inside `storage/`",
     let vm_args: Vec<Vec<u8>> = convert_txn_args(txn_args);
 
     let vm = MoveVM::new(natives).unwrap();
-    let mut gas_status = get_gas_status(gas_budget)?;
+    let mut gas_status = get_gas_status(cost_table, gas_budget)?;
     let mut session = vm.new_session(state);
 
     let script_type_parameters = vec![];
     let script_parameters = vec![];
+    // TODO rethink move-cli arguments for executing functions
+    let vm_args = signer_addresses
+        .iter()
+        .map(|a| {
+            MoveValue::Signer(*a)
+                .simple_serialize()
+                .expect("transaction arguments must serialize")
+        })
+        .chain(vm_args)
+        .collect();
     let res = match script_name_opt {
         Some(script_name) => {
             // script fun. parse module, extract script ID to pass to VM
             let module = CompiledModule::deserialize(&bytecode)
                 .map_err(|e| anyhow!("Error deserializing module: {:?}", e))?;
-            session
-                .execute_script_function(
-                    &module.self_id(),
-                    IdentStr::new(script_name)?,
-                    vm_type_args.clone(),
-                    vm_args,
-                    signer_addresses.clone(),
-                    &mut gas_status,
-                )
-                .map(|_| ())
+            session.execute_entry_function(
+                &module.self_id(),
+                IdentStr::new(script_name)?,
+                vm_type_args.clone(),
+                vm_args,
+                &mut gas_status,
+            )
         }
         None => session.execute_script(
             bytecode.to_vec(),
             vm_type_args.clone(),
             vm_args,
-            signer_addresses.clone(),
             &mut gas_status,
         ),
     };

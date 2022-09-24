@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::shared::{NumberFormat, NumericalAddress};
@@ -78,7 +79,7 @@ pub fn write_module_to_string(
         .function_defs()
         .iter()
         .filter(|fdef| match fdef.visibility {
-            Visibility::Public | Visibility::Script | Visibility::Friend => true,
+            Visibility::Public | Visibility::Friend => true,
             Visibility::Private => false,
         })
         .peekable();
@@ -162,10 +163,7 @@ fn write_module_id(
     match named_address_mapping.get(id) {
         None => format!(
             "{}::{}",
-            format!(
-                "{}",
-                NumericalAddress::new(id.address().into_bytes(), NumberFormat::Hex)
-            ),
+            NumericalAddress::new(id.address().into_bytes(), NumberFormat::Hex),
             id.name()
         ),
         Some(n) => format!("{}::{}", n.as_ref(), id.name()),
@@ -221,8 +219,9 @@ fn write_function_def(ctx: &mut Context, fdef: &FunctionDefinition) -> String {
     let parameters = &ctx.module.signature_at(fhandle.parameters).0;
     let return_ = &ctx.module.signature_at(fhandle.return_).0;
     format!(
-        "    native {}fun {}{}({}){};",
+        "    native {}{}fun {}{}({}){};",
         write_visibility(fdef.visibility),
+        if fdef.is_entry { "entry " } else { "" },
         ctx.module.identifier_at(fhandle.name),
         write_fun_type_parameters(&fhandle.type_parameters),
         write_parameters(ctx, parameters),
@@ -233,7 +232,6 @@ fn write_function_def(ctx: &mut Context, fdef: &FunctionDefinition) -> String {
 fn write_visibility(visibility: Visibility) -> String {
     match visibility {
         Visibility::Public => "public ",
-        Visibility::Script => "public(script) ",
         Visibility::Friend => "public(friend) ",
         Visibility::Private => "",
     }

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Contains types and related functions.
@@ -12,6 +13,7 @@ use crate::{
 use move_binary_format::{file_format::TypeParameterIndex, normalized::Type as MType};
 use move_core_types::language_storage::{StructTag, TypeTag};
 
+use crate::model::QualifiedInstId;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
@@ -156,6 +158,14 @@ impl Type {
         }
     }
 
+    /// Returns true if this is a bool.
+    pub fn is_bool(&self) -> bool {
+        if let Type::Primitive(PrimitiveType::Bool) = self {
+            return true;
+        }
+        false
+    }
+
     /// Returns true if this is any number type.
     pub fn is_number(&self) -> bool {
         if let Type::Primitive(p) = self {
@@ -190,7 +200,7 @@ impl Type {
     /// Skip reference type.
     pub fn skip_reference(&self) -> &Type {
         if let Type::Reference(_, bt) = self {
-            &*bt
+            bt
         } else {
             self
         }
@@ -214,6 +224,16 @@ impl Type {
         } else {
             None
         }
+    }
+
+    /// If this is a struct type, return the associated QualifiedInstId.
+    pub fn get_struct_id(&self, env: &GlobalEnv) -> Option<QualifiedInstId<StructId>> {
+        self.get_struct(env).map(|(se, inst)| {
+            se.module_env
+                .get_id()
+                .qualified(se.get_id())
+                .instantiate(inst.to_vec())
+        })
     }
 
     /// Require this to be a struct, if so extracts its content.
@@ -616,7 +636,7 @@ impl Substitution {
             (Type::Fun(ts1, r1), Type::Fun(ts2, r2)) => {
                 return Ok(Type::Fun(
                     self.unify_vec(sub_variance, ts1, ts2, "functions")?,
-                    Box::new(self.unify(sub_variance, &*r1, &*r2)?),
+                    Box::new(self.unify(sub_variance, r1, r2)?),
                 ));
             }
             (Type::Struct(m1, s1, ts1), Type::Struct(m2, s2, ts2)) => {
@@ -629,17 +649,13 @@ impl Substitution {
                 }
             }
             (Type::Vector(e1), Type::Vector(e2)) => {
-                return Ok(Type::Vector(Box::new(self.unify(
-                    sub_variance,
-                    &*e1,
-                    &*e2,
-                )?)));
+                return Ok(Type::Vector(Box::new(self.unify(sub_variance, e1, e2)?)));
             }
             (Type::TypeDomain(e1), Type::TypeDomain(e2)) => {
                 return Ok(Type::TypeDomain(Box::new(self.unify(
                     sub_variance,
-                    &*e1,
-                    &*e2,
+                    e1,
+                    e2,
                 )?)));
             }
             _ => {}

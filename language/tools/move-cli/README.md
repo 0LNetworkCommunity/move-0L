@@ -8,15 +8,15 @@ three main subcommands:
 * **sandbox commands**: are commands that allow you to write Move modules and scripts, write and run scripts and tests, and view the resulting state of execution in a local sandboxed environment.
 * **experimental commands**: are experimental commands that are currently in development.
 
-Every Move CLI command, with the exception of `package create`, is expected to be run within the context of a [Move package](https://diem.github.io/move/packages.html).
+Every Move CLI command, with the exception of `package create`, is expected to be run within the context of a [Move package](https://move-language.github.io/move/packages.html).
 
 ## Installation
 ```shell
-$ cargo install --path diem/language/tools/move-cli
+$ cargo install --path move/language/tools/move-cli
 ```
 or
 ```shell
-$ cargo install --git https://github.com/diem/diem move-cli --branch main
+$ cargo install --git https://github.com/move-language/move move-cli --branch main
 ```
 
 This will install the `move` binary in your Cargo binary directory. On
@@ -46,44 +46,44 @@ i.e., `move <command> --help`.
 Package commands provide wrappers with sane defaults around other commands
 that are provided either by various Move tools, compiler, or prover.
 
-The `move package new` command will create a new empty Move package:
+The `move new` command will create a new empty Move package:
 ```shell
-$ move package new <package_name> # Create a Move package <package_name> under the current dir
-$ move package new <package_name> -p <path> # Create a Move package <package_name> under path <path>
+$ move new <package_name> # Create a Move package <package_name> under the current dir
+$ move new <package_name> -p <path> # Create a Move package <package_name> under path <path>
 ```
 
 From within a package's root directory, you can build the modules and/or scripts that you have written in the package with:
 ```shell
-$ move package build # Builds the Move package you are currently in
-$ move package build -p <path> # Builds the Move package at <path>
+$ move build # Builds the Move package you are currently in
+$ move build -p <path> # Builds the Move package at <path>
 ```
 
 The compiled artifacts will by default be stored in the `build` directory. You
 can change where the build artifacts are saved by passing the optional `--build-dir` flag:
 
 ```shell
-$ move package build --build-dir <path_to_save_to> # Build current Move package and save artifacts under <path_to_save_to>
+$ move build --build-dir <path_to_save_to> # Build current Move package and save artifacts under <path_to_save_to>
 ```
 
 You can verify the specifications in a Move package using the Move Prover with the `prove` command:
 
 ```shell
-$ move package prove # Verify the specifications in the current package
-$ move package prove -p <path> # Verify the specifications in the package at <path>
+$ move prove # Verify the specifications in the current package
+$ move prove -p <path> # Verify the specifications in the package at <path>
 ```
 
 In order to run the Move Prover [additional tools need to be
-installed](https://github.com/diem/diem/blob/main/language/move-prover/doc/user/install.md).
+installed](https://github.com/move-language/move/blob/main/language/move-prover/doc/user/install.md).
 Information on the Move Prover and its configuration options can be found
-[here](https://github.com/diem/diem/blob/main/language/move-prover/doc/user/prover-guide.md)
+[here](https://github.com/move-language/move/blob/main/language/move-prover/doc/user/prover-guide.md)
 and
-[here](https://github.com/diem/diem/blob/main/language/move-prover/doc/user/spec-lang.md).
+[here](https://github.com/move-language/move/blob/main/language/move-prover/doc/user/spec-lang.md).
 
 You can also run unit tests in a package using the `test` command
 
 ```shell
-$ move package test # Run Move unit tests in the current package
-$ move package test -p <path> # Run Move unit tests in the package at <path>
+$ move test # Run Move unit tests in the current package
+$ move test -p <path> # Run Move unit tests in the package at <path>
 ```
 ## Sandbox Commands
 
@@ -97,39 +97,39 @@ Each sandbox command is run in the context of a Move package. So let's create a
 Move package that we'll use for the code in this README and `cd` into it:
 
 ```shell
-$ move package new readme
+$ move new readme
 $ cd readme
 ```
 
 ### Compiling and running scripts
 
-Let's first start out with a simple script that prints its [`signer`](https://diem.github.io/move/signer.html).
+Let's first start out with a simple script that prints its [`signer`](https://move-language.github.io/move/signer.html).
 Create a file named `sources/debug_script.move` and type the following into it:
 
 ```rust
 // sources/debug_script.move
 script {
-use Std::Debug;
+use std::debug;
 fun debug_script(account: signer) {
-    Debug::print(&account)
+    debug::print(&account)
 }
 }
 ```
 
 Before we can run this however, we need to import the Move standard library
 nursery in order to have access to the `Debug` module and `Std` [named
-address](https://diem.github.io/move/address.html#named-addresses).
+address](https://move-language.github.io/move/address.html#named-addresses).
 You can specify dependencies locally, or using a Git URL. Here, we will specify
 it using Git, so add the following to the `Move.toml` file in the `readme`
 directory:
 
 ```toml
 [addresses]
-Std = "0x1" # Specify and assign 0x1 to the named address "Std"
+std = "0x1" # Specify and assign 0x1 to the named address "std"
 
 [dependencies]
-MoveNursery = { git = "https://github.com/diem/diem.git", subdir = "language/move-stdlib/nursery", rev = "d45f20a" }
-#                ^                    ^                     ^                                       ^
+MoveNursery = { git = "https://github.com/move-language/move.git", subdir = "language/move-stdlib/nursery", rev = "main" }
+#                ^                    ^                              ^                                       ^
 #            Git dependency       Git clone URL       Subdir under git repo (optional)           Git revision to use
 ```
 
@@ -168,7 +168,7 @@ Try saving this code in `sources/Test.move`:
 ```rust
 // sources/Test.move
 module 0x2::Test {
-    use Std::Signer;
+    use std::signer;
 
     struct Resource has key { i: u64 }
 
@@ -177,11 +177,11 @@ module 0x2::Test {
     }
 
     public fun write(account: &signer, i: u64) acquires Resource {
-        borrow_global_mut<Resource>(Signer::address_of(account)).i = i;
+        borrow_global_mut<Resource>(signer::address_of(account)).i = i;
     }
 
     public fun unpublish(account: &signer) acquires Resource {
-        let Resource { i: _ } = move_from(Signer::address_of(account));
+        let Resource { i: _ } = move_from(signer::address_of(account));
   }
 }
 ```
@@ -189,7 +189,7 @@ module 0x2::Test {
 Now, try
 
 ```shell
-$ move package build
+$ move build
 ```
 
 This will cause the CLI to compile and typecheck the modules under
@@ -250,13 +250,13 @@ public write() {
 ```
 
 You can also look at the compiled bytecode before publishing to `storage` by
-running either `move package disassemble --name <module_name>` or `move package
+running either `move disassemble --name <module_name>` or `move
 disassemble --name <module_name> --interactive` to interactively inspect the
 bytecode and how it relates to the Move source code:
 
 ```shell
-$ move package disassemble --name Test --interactive # You can quit by pressing "q"
-$ move package disassemble --name Test
+$ move disassemble --name Test --interactive # You can quit by pressing "q"
+$ move disassemble --name Test
 // Move bytecode v4
 module 2.Test {
 struct Resource has key {
@@ -408,7 +408,7 @@ $ cat readme/args.txt
 ## Arg files can have comments!
 sandbox run sources/debug_script.move --signers 0xf
 sandbox run sources/debug_script.move --signers 0xf
-package build
+build
 sandbox publish
 sandbox view storage/0x00000000000000000000000000000002/modules/Test.mv
 sandbox run sources/test_script.move --signers 0xf -v
@@ -419,7 +419,7 @@ We can then use the `move sandbox test` command and point it at the `readme` dir
 Move CLI commands for us in sequence:
 
 ```shell
-$ move sandbox exp-test readme
+$ move sandbox exp-test -p readme
 ...<snipped output>
 0 / 1 test(s) passed.
 Error: 1 / 1 test(s) failed.
@@ -430,7 +430,7 @@ yet. We can generate this expectation file by setting the `UPDATE_BASELINE`
 environment variable when running the test:
 
 ```shell
-$ UPDATE_BASELINE=1 move sandbox exp-test readme
+$ UPDATE_BASELINE=1 move sandbox exp-test -p readme
 1 / 1 test(s) passed.
 ```
 
@@ -453,11 +453,11 @@ address the need for code coverage information with an additional flag,
 `--track-cov`, that can be passed to the `move sandbox exp-test` command.
 
 Note: To view coverage information, the Move CLI must be installed with the `--debug` flag;
-i.e., `cargo install --debug --path diem/language/tools/move-cli`.
+i.e., `cargo install --debug --path move/language/tools/move-cli`.
 
 Using our running example to illustrate:
 ```shell
-$ move sandbox test readme --track-cov
+$ move sandbox exp-test -p readme --track-cov
 1 / 1 test(s) passed.
 Module 00000000000000000000000000000002::Test
         fun publish
@@ -509,7 +509,7 @@ sandbox run sources/test_unpublish_script.move --signers 0xf -v
 
 Now we can re-test the `readme` again
 ```shell
-$ move sandbox exp-test readme --track-cov
+$ move sandbox exp-test -p readme --track-cov
 1 / 1 test(s) passed.
 Module 00000000000000000000000000000002::Test
         fun publish

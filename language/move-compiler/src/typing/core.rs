@@ -1,15 +1,16 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     diag,
     diagnostics::{codes::NameResolution, Diagnostic},
-    expansion::ast::{AbilitySet, ModuleIdent},
+    expansion::ast::{AbilitySet, ModuleIdent, Visibility},
     naming::ast::{
         self as N, BuiltinTypeName_, FunctionSignature, StructDefinition, StructTypeParameter,
         TParam, TParamID, TVar, Type, TypeName, TypeName_, Type_,
     },
-    parser::ast::{Ability_, ConstantName, Field, FunctionName, StructName, Var, Visibility},
+    parser::ast::{Ability_, ConstantName, Field, FunctionName, StructName, Var},
     shared::{unique_map::UniqueMap, *},
     FullyCompiledProgram,
 };
@@ -21,12 +22,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 //**************************************************************************************************
 
 pub enum Constraint {
-    IsImplicitlyCopyable {
-        loc: Loc,
-        msg: String,
-        ty: Type,
-        fix: String,
-    },
     AbilityConstraint {
         loc: Loc,
         msg: Option<String>,
@@ -91,18 +86,16 @@ impl<'env> Context<'env> {
         pre_compiled_lib: Option<&FullyCompiledProgram>,
         prog: &N::Program,
     ) -> Self {
-        let all_modules = prog.modules.key_cloned_iter().chain(
-            pre_compiled_lib
-                .iter()
-                .map(|pre_compiled| {
-                    pre_compiled
-                        .naming
-                        .modules
-                        .key_cloned_iter()
-                        .filter(|(mident, _m)| !prog.modules.contains_key(mident))
-                })
-                .flatten(),
-        );
+        let all_modules = prog
+            .modules
+            .key_cloned_iter()
+            .chain(pre_compiled_lib.iter().flat_map(|pre_compiled| {
+                pre_compiled
+                    .naming
+                    .modules
+                    .key_cloned_iter()
+                    .filter(|(mident, _m)| !prog.modules.contains_key(mident))
+            }));
         let modules = UniqueMap::maybe_from_iter(all_modules.map(|(mident, mdef)| {
             let structs = mdef.structs.clone();
             let functions = mdef.functions.ref_map(|fname, fdef| FunctionInfo {
@@ -162,18 +155,6 @@ impl<'env> Context<'env> {
         sp(loc, Type_::UnresolvedError)
     }
 
-    pub fn add_implicit_copyable_constraint(
-        &mut self,
-        loc: Loc,
-        msg: impl Into<String>,
-        ty: Type,
-        fix: impl Into<String>,
-    ) {
-        let msg = msg.into();
-        let fix = fix.into();
-        self.constraints
-            .push(Constraint::IsImplicitlyCopyable { loc, msg, ty, fix })
-    }
     pub fn add_ability_constraint(
         &mut self,
         loc: Loc,
@@ -294,23 +275,6 @@ impl<'env> Context<'env> {
         self.is_current_module(m) && matches!(&self.current_function, Some(curf) if curf == f)
     }
 
-    fn is_in_script_context(&self) -> bool {
-        match (&self.current_module, &self.current_function) {
-            // in a constant
-            (_, None) => false,
-            // in a script function
-            (None, Some(_)) => true,
-            // in a module function
-            (Some(current_m), Some(current_f)) => {
-                let current_finfo = self.function_info(current_m, current_f);
-                match &current_finfo.visibility {
-                    Visibility::Public(_) | Visibility::Friend(_) | Visibility::Internal => false,
-                    Visibility::Script(_) => true,
-                }
-            }
-        }
-    }
-
     fn current_module_is_a_friend_of(&self, m: &ModuleIdent) -> bool {
         match &self.current_module {
             None => false,
@@ -376,7 +340,7 @@ impl<'env> Context<'env> {
     pub fn get_break_type(&self) -> Option<&Type> {
         match &self.loop_info.0 {
             LoopInfo_::NotInLoop | LoopInfo_::BreakTypeUnknown => None,
-            LoopInfo_::BreakType(t) => Some(&*t),
+            LoopInfo_::BreakType(t) => Some(t),
         }
     }
 
@@ -844,29 +808,15 @@ pub fn make_function_type(
         Visibility::Internal if in_current_module => (),
         Visibility::Internal => {
             let internal_msg = format!(
-                "This function is internal to its module. Only '{}', '{}', and '{}' functions can \
+                "This function is internal to its module. Only '{}' and '{}' functions can \
                  be called outside of their module",
                 Visibility::PUBLIC,
-                Visibility::SCRIPT,
                 Visibility::FRIEND
             );
             context.env.add_diag(diag!(
                 TypeSafety::Visibility,
                 (loc, format!("Invalid call to '{}::{}'", m, f)),
                 (defined_loc, internal_msg),
-            ));
-        }
-        Visibility::Script(_) if context.is_in_script_context() => (),
-        Visibility::Script(vis_loc) => {
-            let internal_msg = format!(
-                "This function can only be called from a script context, i.e. a 'script' function \
-                 or a '{}' function",
-                Visibility::SCRIPT
-            );
-            context.env.add_diag(diag!(
-                TypeSafety::ScriptContext,
-                (loc, format!("Invalid call to '{}::{}'", m, f)),
-                (vis_loc, internal_msg),
             ));
         }
         Visibility::Friend(_) if in_current_module || context.current_module_is_a_friend_of(m) => {}
@@ -909,9 +859,6 @@ pub fn solve_constraints(context: &mut Context) {
     let constraints = std::mem::take(&mut context.constraints);
     for constraint in constraints {
         match constraint {
-            Constraint::IsImplicitlyCopyable { loc, msg, ty, fix } => {
-                solve_implicitly_copyable_constraint(context, loc, msg, ty, fix)
-            }
             Constraint::AbilityConstraint {
                 loc,
                 msg,
@@ -1036,58 +983,6 @@ pub fn ability_not_satisified_tips<'a>(
     }
 }
 
-// This could be done with abilities, but currently all abilities are user accessable. So it seems
-// reasonable to keep this separate for now
-pub fn is_implicitly_copyable(subst: &Subst, ty: &Type) -> bool {
-    use BuiltinTypeName_ as B;
-    use Type_ as T;
-    match &ty.value {
-        T::Var(_) => panic!("ICE call unfold_type before is_implicitly_copyable"),
-
-        T::Unit
-        | T::Ref(_, _)
-        | T::UnresolvedError
-        | T::Anything
-        | T::Apply(_, sp!(_, TypeName_::Builtin(sp!(_, B::Address))), _)
-        | T::Apply(_, sp!(_, TypeName_::Builtin(sp!(_, B::U8))), _)
-        | T::Apply(_, sp!(_, TypeName_::Builtin(sp!(_, B::U64))), _)
-        | T::Apply(_, sp!(_, TypeName_::Builtin(sp!(_, B::U128))), _)
-        | T::Apply(_, sp!(_, TypeName_::Builtin(sp!(_, B::Bool))), _) => true,
-
-        T::Apply(_, sp!(_, TypeName_::Builtin(sp!(_, B::Signer))), _)
-        | T::Apply(_, sp!(_, TypeName_::Builtin(sp!(_, B::Vector))), _)
-        | T::Param(TParam { .. })
-        | T::Apply(_, sp!(_, TypeName_::ModuleType(_, _)), _) => false,
-
-        T::Apply(_, sp!(_, TypeName_::Multiple(_)), ty_args) => ty_args
-            .iter()
-            .all(|ty_arg| is_implicitly_copyable(subst, &unfold_type(subst, ty_arg.clone()))),
-    }
-}
-
-fn solve_implicitly_copyable_constraint(
-    context: &mut Context,
-    loc: Loc,
-    msg: String,
-    ty: Type,
-    fix: String,
-) {
-    let ty = unfold_type(&context.subst, ty);
-    let tloc = ty.loc;
-    if !is_implicitly_copyable(&context.subst, &ty) {
-        let ty_msg = format!(
-            "The type {} is not implicitly copyable. Implicit copies are limited to simple \
-             primitive values",
-            error_format(&ty, &context.subst),
-        );
-        context.env.add_diag(diag!(
-            AbilitySafety::ImplicitlyCopyable,
-            (loc, format!("{} {}", msg, fix)),
-            (tloc, ty_msg),
-        ))
-    }
-}
-
 fn solve_builtin_type_constraint(
     context: &mut Context,
     builtin_set: &BTreeSet<BuiltinTypeName_>,
@@ -1115,6 +1010,10 @@ fn solve_builtin_type_constraint(
         )
     };
     match &t.value {
+        // already failed, ignore
+        UnresolvedError => (),
+        // Will fail later in compiling, either through dead code, or unknown type variable
+        Anything => (),
         Apply(abilities_opt, sp!(_, Builtin(sp!(_, b))), args) if builtin_set.contains(b) => {
             if let Some(abilities) = abilities_opt {
                 assert!(

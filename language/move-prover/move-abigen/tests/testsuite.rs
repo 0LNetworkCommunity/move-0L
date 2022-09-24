@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{ffi::OsStr, path::Path};
@@ -26,6 +27,10 @@ fn test_runner(path: &Path) -> datatest_stable::Result<()> {
     let mut options = Options::create_from_args(&args)?;
     options.setup_logging_for_test();
     options.abigen.compiled_script_directory = "tests/sources".to_string();
+    options.move_deps.push("../../move-stdlib".to_string());
+    options
+        .move_named_address_values
+        .push("std=0x1".to_string());
 
     test_abigen(path, options, "abi")?;
 
@@ -69,7 +74,7 @@ fn test_abigen(path: &Path, mut options: Options, suffix: &str) -> anyhow::Resul
         }
         Err(err) => {
             let mut contents = format!("Move prover abigen returns: {}\n", err);
-            contents += &String::from_utf8_lossy(&error_writer.into_inner()).to_string();
+            contents += &String::from_utf8_lossy(&error_writer.into_inner());
             let baseline_path = path.with_extension(suffix);
             verify_or_update_baseline(&baseline_path, &contents)?;
         }

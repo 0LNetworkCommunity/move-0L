@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Analysis which computes an annotation for each function on whether this function should be
@@ -6,12 +7,13 @@
 //! each function as well as collect information on how these invariants should be handled (i.e.,
 //! checked after bytecode, checked at function exit, or deferred to caller).
 
-use crate::{
-    function_target::{FunctionData, FunctionTarget},
-    function_target_pipeline::{FunctionTargetProcessor, FunctionTargetsHolder, FunctionVariant},
-    options::ProverOptions,
-    usage_analysis,
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::{self, Formatter},
 };
+
+use codespan_reporting::diagnostic::Severity;
+use itertools::Itertools;
 
 use move_model::{
     ast::GlobalInvariant,
@@ -23,11 +25,11 @@ use move_model::{
     ty::{TypeUnificationAdapter, Variance},
 };
 
-use codespan_reporting::diagnostic::Severity;
-use itertools::Itertools;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::{self, Formatter},
+use crate::{
+    function_target::{FunctionData, FunctionTarget},
+    function_target_pipeline::{FunctionTargetProcessor, FunctionTargetsHolder, FunctionVariant},
+    options::ProverOptions,
+    usage_analysis,
 };
 
 /// The annotation for information about verification.
@@ -115,8 +117,7 @@ impl FunctionTargetProcessor for VerificationAnalysisProcessor {
         let inv_analysis = env.get_extension::<InvariantAnalysisData>().unwrap();
         let target_invs: BTreeSet<_> = target_modules
             .iter()
-            .map(|menv| env.get_global_invariants_by_module(menv.get_id()))
-            .flatten()
+            .flat_map(|menv| env.get_global_invariants_by_module(menv.get_id()))
             .collect();
         let inv_relevance = inv_analysis
             .fun_to_inv_map
@@ -165,8 +166,7 @@ impl FunctionTargetProcessor for VerificationAnalysisProcessor {
         let target_invs: BTreeSet<_> = env
             .get_target_modules()
             .iter()
-            .map(|menv| env.get_global_invariants_by_module(menv.get_id()))
-            .flatten()
+            .flat_map(|menv| env.get_global_invariants_by_module(menv.get_id()))
             .collect();
 
         let fmt_inv_ids = |ids: &BTreeSet<GlobalId>| -> String {
@@ -318,8 +318,7 @@ impl FunctionTargetProcessor for VerificationAnalysisProcessor {
         // check for unused invariants defined in the target module
         let all_checked_invariants: BTreeSet<_> = fun_to_inv_map
             .values()
-            .map(|rel| rel.direct_modified.iter())
-            .flatten()
+            .flat_map(|rel| rel.direct_modified.iter())
             .cloned()
             .collect();
         for module_env in env.get_modules() {
@@ -388,13 +387,22 @@ impl VerificationAnalysisProcessor {
 
         // at this time, we only have the `baseline` variant in the targets
         let variant = FunctionVariant::Baseline;
-        let data = targets
-            .get_data_mut(&fun_env.get_qualified_id(), &variant)
-            .expect("function data defined");
-        let info = data.annotations.get_or_default_mut::<VerificationInfo>();
-        if !info.inlined {
-            info.inlined = true;
-            Self::mark_callees_inlined(fun_env, targets);
+        if let Some(data) = targets.get_data_mut(&fun_env.get_qualified_id(), &variant) {
+            let info = data.annotations.get_or_default_mut::<VerificationInfo>();
+            if !info.inlined {
+                info.inlined = true;
+                Self::mark_callees_inlined(fun_env, targets);
+            }
+        } else {
+            fun_env.module_env.env.error(
+                &fun_env.get_loc(),
+                &format!(
+                    "function `{}` is a recursive function \
+                       (or part of a mutually recursive function group) \
+                       and should be marked as opaque",
+                    fun_env.get_full_name_str()
+                ),
+            );
         }
     }
 
@@ -470,7 +478,7 @@ impl VerificationAnalysisProcessor {
             .collect();
         let mut done = BTreeSet::new();
         let mut result = vec![];
-        while let Some(caller_list) = worklist.iter().cloned().next() {
+        while let Some(caller_list) = worklist.iter().next().cloned() {
             worklist.remove(&caller_list);
             let caller_id = *caller_list.iter().last().unwrap();
             done.insert(caller_id);

@@ -1,9 +1,10 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
 
-use structopt::StructOpt;
+use clap::Parser;
 use test_generation::{config::Args, run_generation};
 
 fn setup_log() {
@@ -12,6 +13,6 @@ fn setup_log() {
 
 pub fn main() {
     setup_log();
-    let args = Args::from_args();
+    let args = Args::parse();
     run_generation(args);
 }

@@ -1,9 +1,11 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::anyhow;
 use codespan_reporting::{diagnostic::Severity, term::termcolor::Buffer};
 use move_command_line_common::testing::EXP_EXT;
+use move_compiler::shared::PackagePaths;
 use move_model::{model::GlobalEnv, options::ModelBuilderOptions, run_model_builder_with_options};
 use move_prover_test_utils::{baseline_test::verify_or_update_baseline, extract_test_directives};
 use move_stackless_bytecode::{
@@ -203,7 +205,6 @@ fn get_tested_transformation_pipeline(
             pipeline.add_processor(UsageProcessor::new());
             Ok(Some(pipeline))
         }
-
         _ => Err(anyhow!(
             "the sub-directory `{}` has no associated pipeline to test",
             dir_name
@@ -215,10 +216,13 @@ fn test_runner(path: &Path) -> datatest_stable::Result<()> {
     let mut sources = extract_test_directives(path, "// dep:")?;
     sources.push(path.to_string_lossy().to_string());
     let env: GlobalEnv = run_model_builder_with_options(
-        &sources,
-        &[],
+        vec![PackagePaths {
+            name: None,
+            paths: sources,
+            named_address_map: move_stdlib::move_stdlib_named_addresses(),
+        }],
+        vec![],
         ModelBuilderOptions::default(),
-        move_stdlib::move_stdlib_named_addresses(),
     )?;
     let out = if env.has_errors() {
         let mut error_writer = Buffer::no_color();
@@ -270,7 +274,7 @@ fn test_runner(path: &Path) -> datatest_stable::Result<()> {
         if env.has_errors() || env.has_warnings() {
             env.report_diag(&mut error_writer, Severity::Warning);
             text += "============ Diagnostics ================\n";
-            text += &String::from_utf8_lossy(&error_writer.into_inner()).to_string();
+            text += &String::from_utf8_lossy(&error_writer.into_inner());
         }
         text
     };

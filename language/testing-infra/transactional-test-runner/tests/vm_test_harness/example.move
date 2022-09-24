@@ -25,11 +25,11 @@ module A::N {
     }
 
     public fun take(s: &signer): u64 acquires R {
-        let R { v } = move_from(Std::Signer::address_of(s));
+        let R { v } = move_from(std::signer::address_of(s));
         v
     }
 
-    public(script) fun ex(_s: signer, _u: u64) {
+    public entry fun ex(_s: signer, _u: u64) {
         abort 0
     }
 }

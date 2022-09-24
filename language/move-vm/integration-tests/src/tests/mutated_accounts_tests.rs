@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::compiler::{as_module, compile_units};
@@ -10,7 +11,7 @@ use move_core_types::{
 };
 use move_vm_runtime::move_vm::MoveVM;
 use move_vm_test_utils::InMemoryStorage;
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_types::gas::UnmeteredGasMeter;
 
 const TEST_ADDR: AccountAddress = AccountAddress::new([42; AccountAddress::LENGTH]);
 
@@ -32,7 +33,7 @@ fn mutated_accounts() {
         }
     "#;
 
-    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR.to_string()));
+    let code = code.replace("{{ADDR}}", &format!("0x{}", TEST_ADDR));
     let mut units = compile_units(&code).unwrap();
     let m = as_module(units.pop().unwrap());
     let mut blob = vec![];
@@ -45,20 +46,18 @@ fn mutated_accounts() {
     let vm = MoveVM::new(vec![]).unwrap();
     let mut sess = vm.new_session(&storage);
 
-    let mut gas_status = GasStatus::new_unmetered();
-
     let publish = Identifier::new("publish").unwrap();
     let flip = Identifier::new("flip").unwrap();
     let get = Identifier::new("get").unwrap();
 
     let account1 = AccountAddress::random();
 
-    sess.execute_function(
+    sess.execute_function_bypass_visibility(
         &module_id,
         &publish,
         vec![],
         serialize_values(&vec![MoveValue::Signer(account1)]),
-        &mut gas_status,
+        &mut UnmeteredGasMeter,
     )
     .unwrap();
 
@@ -67,23 +66,23 @@ fn mutated_accounts() {
     // transaction epilogue).
     assert_eq!(sess.num_mutated_accounts(&TEST_ADDR), 2);
 
-    sess.execute_function(
+    sess.execute_function_bypass_visibility(
         &module_id,
         &get,
         vec![],
         serialize_values(&vec![MoveValue::Address(account1)]),
-        &mut gas_status,
+        &mut UnmeteredGasMeter,
     )
     .unwrap();
 
     assert_eq!(sess.num_mutated_accounts(&TEST_ADDR), 2);
 
-    sess.execute_function(
+    sess.execute_function_bypass_visibility(
         &module_id,
         &flip,
         vec![],
         serialize_values(&vec![MoveValue::Address(account1)]),
-        &mut gas_status,
+        &mut UnmeteredGasMeter,
     )
     .unwrap();
     assert_eq!(sess.num_mutated_accounts(&TEST_ADDR), 2);
@@ -92,12 +91,12 @@ fn mutated_accounts() {
     storage.apply(changes).unwrap();
 
     let mut sess = vm.new_session(&storage);
-    sess.execute_function(
+    sess.execute_function_bypass_visibility(
         &module_id,
         &get,
         vec![],
         serialize_values(&vec![MoveValue::Address(account1)]),
-        &mut gas_status,
+        &mut UnmeteredGasMeter,
     )
     .unwrap();
 

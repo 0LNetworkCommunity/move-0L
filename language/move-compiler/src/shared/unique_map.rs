@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
@@ -65,6 +66,10 @@ impl<K: TName, V> UniqueMap<K, V> {
 
     pub fn get_loc_(&self, key_: &K::Key) -> Option<&K::Loc> {
         self.0.get(key_).map(|loc_value| &loc_value.0)
+    }
+
+    pub fn get_key(&self, key: &K) -> Option<&K::Key> {
+        self.0.get_key_value(key.borrow().1).map(|(k, _v)| k)
     }
 
     pub fn remove(&mut self, key: &K) -> Option<V> {

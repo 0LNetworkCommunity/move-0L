@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![allow(clippy::unit_arg)]
@@ -129,7 +130,9 @@ impl VMStatus {
                 let code = *code;
                 debug_assert!(code != StatusCode::EXECUTED);
                 debug_assert!(code != StatusCode::ABORTED);
-                debug_assert!(code.status_type() != StatusType::Execution);
+                debug_assert!(
+                    code.status_type() != StatusType::Execution || code == StatusCode::OUT_OF_GAS
+                );
                 code
             }
         }
@@ -583,7 +586,7 @@ pub enum StatusCode {
     FAILED_TO_DESERIALIZE_ARGUMENT = 1100,
     NUMBER_OF_SIGNER_ARGUMENTS_MISMATCH = 1101,
     CALLED_SCRIPT_VISIBLE_FROM_NON_SCRIPT_VISIBLE = 1102,
-    EXECUTE_SCRIPT_FUNCTION_CALLED_ON_NON_SCRIPT_VISIBLE = 1103,
+    EXECUTE_ENTRY_FUNCTION_CALLED_ON_NON_ENTRY_FUNCTION = 1103,
     // Cannot mark the module itself as a friend
     INVALID_FRIEND_DECL_WITH_SELF = 1104,
     // Cannot declare modules outside of account address as friends
@@ -596,6 +599,8 @@ pub enum StatusCode {
     INVALID_PHANTOM_TYPE_PARAM_POSITION = 1108,
     VEC_UPDATE_EXISTS_MUTABLE_BORROW_ERROR = 1109,
     VEC_BORROW_ELEMENT_EXISTS_MUTABLE_BORROW_ERROR = 1110,
+    // Loops are too deeply nested.
+    LOOP_MAX_DEPTH_REACHED = 1111,
 
     // These are errors that the VM might raise if a violation of internal
     // invariants takes place.
@@ -660,6 +665,8 @@ pub enum StatusCode {
     CALL_STACK_OVERFLOW = 4021,
     VM_MAX_TYPE_DEPTH_REACHED = 4024,
     VM_MAX_VALUE_DEPTH_REACHED = 4025,
+    VM_EXTENSION_ERROR = 4026,
+
 
     //////// 0L /////////
     STDLIB_UPGRADE_ERROR = 9001,

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::syntax::ParseError;
@@ -49,10 +50,8 @@ pub enum Tok {
     /// Aborts if in the spec language
     AbortsIf,
     Acquires,
-    Address,
     As,
     Assert,
-    Bool,
     BorrowGlobal,
     BorrowGlobalMut,
     Copy,
@@ -90,15 +89,10 @@ pub enum Tok {
     SpecReturn,
     /// Return statement in the Move language
     Return,
-    Signer,
     Struct,
     SucceedsIf,
     Synthetic,
     True,
-    U8,
-    U64,
-    U128,
-    Vector,
     VecPack(u64),
     VecLen,
     VecImmBorrow,
@@ -174,6 +168,7 @@ impl<'input> Lexer<'input> {
         let mut text = &self.text[self.cur_end..];
         loop {
             // Trim the only whitespace characters we recognize: newline, tab, and space.
+            text = text.trim_start_matches("\r\n");
             text = text.trim_start_matches(|c: char| matches!(c, '\n' | '\t' | ' '));
             // Trim the only comments we recognize: '// ... \n'.
             if text.starts_with("//") {
@@ -266,7 +261,6 @@ impl<'input> Lexer<'input> {
                             }
                         }
                         Some('<') => match name {
-                            "vector" => (Tok::Vector, len),
                             "vec_len" => (Tok::VecLen, len),
                             "vec_imm_borrow" => (Tok::VecImmBorrow, len),
                             "vec_mut_borrow" => (Tok::VecMutBorrow, len),
@@ -408,14 +402,14 @@ fn get_name_len(text: &str) -> usize {
     }
     text.chars()
         .position(|c| !matches!(c, 'a'..='z' | 'A'..='Z' | '$' | '_' | '0'..='9'))
-        .unwrap_or_else(|| text.len())
+        .unwrap_or(text.len())
 }
 
 fn get_decimal_number(text: &str) -> (Tok, usize) {
     let len = text
         .chars()
         .position(|c| !matches!(c, '0'..='9'))
-        .unwrap_or_else(|| text.len());
+        .unwrap_or(text.len());
     let rest = &text[len..];
     if rest.starts_with("u8") {
         (Tok::U8Value, len + 2)
@@ -432,7 +426,7 @@ fn get_decimal_number(text: &str) -> (Tok, usize) {
 fn get_hex_digits_len(text: &str) -> usize {
     text.chars()
         .position(|c| !matches!(c, 'a'..='f' | 'A'..='F' | '0'..='9'))
-        .unwrap_or_else(|| text.len())
+        .unwrap_or(text.len())
 }
 
 // Check for an optional sequence of hex digits following by a double quote, and return
@@ -452,9 +446,7 @@ fn get_name_token(name: &str) -> Tok {
         "abort" => Tok::Abort,
         "aborts_if" => Tok::AbortsIf,
         "acquires" => Tok::Acquires,
-        "address" => Tok::Address,
         "as" => Tok::As,
-        "bool" => Tok::Bool,
         "copy" => Tok::Copy,
         "ensures" => Tok::Ensures,
         "false" => Tok::False,
@@ -481,14 +473,10 @@ fn get_name_token(name: &str) -> Tok {
         "RET" => Tok::SpecReturn,
         "return" => Tok::Return,
         "script" => Tok::Script,
-        "signer" => Tok::Signer,
         "struct" => Tok::Struct,
         "succeeds_if" => Tok::SucceedsIf,
         "synthetic" => Tok::Synthetic,
         "true" => Tok::True,
-        "u8" => Tok::U8,
-        "u64" => Tok::U64,
-        "u128" => Tok::U128,
         _ => Tok::NameValue,
     }
 }

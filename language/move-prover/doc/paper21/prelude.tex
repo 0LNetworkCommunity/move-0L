@@ -7,13 +7,27 @@
 \usepackage{mathpartir}
 \usepackage{graphicx}
 \usepackage{xspace}
-\usepackage{breakurl}
-\usepackage[breaklinks,colorlinks=true]{hyperref}
-\def\UrlBreaks{\do\/\do-}
+\usepackage{xurl}
+%\usepackage{breakurl}
+%\def\UrlBreaks{\do\/\do-}
 \usepackage{caption}
+\usepackage{bbding}
+\usepackage[paperheight=235mm, paperwidth=155mm,textwidth=12.2cm,textheight=19.3cm]{geometry}
 
-\newcommand{\Section}[1]{\vspace{-0ex}\section{#1}}
-\newcommand{\SubSection}[1]{\vspace{-0ex}\subsection{#1}}
+\usepackage[bookmarks,unicode,colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+%\makeatletter
+%\RequirePackage[bookmarks,unicode,colorlinks=true]{hyperref}%
+%   \def\@citecolor{blue}%
+%   \def\@urlcolor{blue}%
+%   \def\@linkcolor{blue}%
+\def\UrlFont{\rmfamily}
+%\def\orcidID#1{\smash{\href{http://orcid.org/#1}{\protect\raisebox{-1.25pt}{\protect\includegraphics{orcid_color.eps}}}}}
+%\makeatother
+
+
+
+\newcommand{\Section}[1]{\vspace{-0.5ex}\section{#1}}
+\newcommand{\SubSection}[1]{\vspace{-1.0ex}\subsection{#1}}
 \newcommand{\Paragraph}[1]{\vspace{-1.0ex}\subsubsection{#1}} % lncs
 
 \newcommand{\TODO}[2]{%

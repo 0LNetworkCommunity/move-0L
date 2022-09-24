@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{options::ModuleGeneratorOptions, padding::Pad, utils::random_string};
@@ -91,7 +92,7 @@ impl<'a> ModuleGenerator<'a> {
 
     fn identifier(&mut self) -> String {
         let len = self.gen.gen_range(10..self.options.max_string_size);
-        random_string(&mut self.gen, len)
+        random_string(self.gen, len)
     }
 
     fn base_type(&mut self, ty_param_context: &[&TypeVar]) -> Type {
@@ -241,6 +242,7 @@ impl<'a> ModuleGenerator<'a> {
         });
         let fun = Function_ {
             visibility: FunctionVisibility::Public,
+            is_entry: false,
             acquires: Vec::new(),
             specifications: Vec::new(),
             signature,

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! This module implements a checker for verifying signature tokens used in types of function
@@ -46,6 +47,7 @@ impl<'a> SignatureChecker<'a> {
         };
         sig_check.verify_signature_pool(script.signatures())?;
         sig_check.verify_function_signatures(script.function_handles())?;
+        sig_check.check_instantiation(script.parameters, &script.type_parameters)?;
         sig_check.verify_code(script.code(), &script.type_parameters)
     }
 

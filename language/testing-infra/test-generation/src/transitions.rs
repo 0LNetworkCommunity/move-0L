@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -1349,16 +1350,16 @@ macro_rules! state_never {
 #[macro_export]
 macro_rules! state_stack_bin_op {
     (#left) => {
-        Box::new(move |state| stack_bin_op(state, crate::transitions::StackBinOpResult::Left))
+        Box::new(move |state| stack_bin_op(state, $crate::transitions::StackBinOpResult::Left))
     };
     (#right) => {
-        Box::new(move |state| stack_bin_op(state, crate::transitions::StackBinOpResult::Right))
+        Box::new(move |state| stack_bin_op(state, $crate::transitions::StackBinOpResult::Right))
     };
     () => {
         state_stack_bin_op!(#left)
     };
     ($e: expr) => {
-        Box::new(move |state| stack_bin_op(state, crate::transitions::StackBinOpResult::Other($e)))
+        Box::new(move |state| stack_bin_op(state, $crate::transitions::StackBinOpResult::Other($e)))
     }
 }
 

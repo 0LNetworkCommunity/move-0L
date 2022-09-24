@@ -19,7 +19,10 @@ options provided to the prover.
 {% import "native" as native %}
 {% include "vector-theory" %}
 {% include "multiset-theory" %}
-
+{% include "table-theory" %}
+{%- if options.custom_natives -%}
+{% include "custom-natives" %}
+{%- endif %}
 
 // ============================================================================================
 // Primitive Types
@@ -110,6 +113,9 @@ function {:constructor} $Local(i: int): $Location;
 // when mutation ends.
 function {:constructor} $Param(i: int): $Location;
 
+// The location of an uninitialized mutation. Using this to make sure that the location
+// will not be equal to any valid mutation locations, i.e., $Local, $Global, or $Param.
+function {:constructor} $Uninitialized(): $Location;
 
 // A mutable reference which also carries its current value. Since mutable references
 // are single threaded in Move, we can keep them together and treat them as a value
@@ -141,7 +147,12 @@ function {:inline} $ChildMutation<T1, T2>(m: $Mutation T1, offset: int, v: T2): 
     $Mutation(l#$Mutation(m), ExtendVec(p#$Mutation(m), offset), v)
 }
 
-// Return true of the mutation is a parent of a child which was derived with the given edge offset. This
+// Return true if two mutations share the location and path
+function {:inline} $IsSameMutation<T1, T2>(parent: $Mutation T1, child: $Mutation T2 ): bool {
+    l#$Mutation(parent) == l#$Mutation(child) && p#$Mutation(parent) == p#$Mutation(child)
+}
+
+// Return true if the mutation is a parent of a child which was derived with the given edge offset. This
 // is used to implement write-back choices.
 function {:inline} $IsParentMutation<T1, T2>(parent: $Mutation T1, edge: int, child: $Mutation T2 ): bool {
     l#$Mutation(parent) == l#$Mutation(child) &&
@@ -155,7 +166,7 @@ function {:inline} $IsParentMutation<T1, T2>(parent: $Mutation T1, edge: int, ch
     ))))
 }
 
-// Return true of the mutation is a parent of a child, for hyper edge.
+// Return true if the mutation is a parent of a child, for hyper edge.
 function {:inline} $IsParentMutationHyper<T1, T2>(parent: $Mutation T1, hyper_edge: Vec int, child: $Mutation T2 ): bool {
     l#$Mutation(parent) == l#$Mutation(child) &&
     (var pp := p#$Mutation(parent);
@@ -243,6 +254,15 @@ procedure {:inline 1} $ExecFailureAbort() {
     $abort_code := $EXEC_FAILURE_CODE;
 }
 
+procedure {:inline 1} $Abort(code: int) {
+    $abort_flag := true;
+    $abort_code := code;
+}
+
+function {:inline} $StdError(cat: int, reason: int): int {
+    reason * 256 + cat
+}
+
 procedure {:inline 1} $InitVerification() {
     // Set abort_flag to false, and havoc abort_code
     $abort_flag := false;
@@ -328,41 +348,58 @@ procedure {:inline 1} $Sub(src1: int, src2: int) returns (dst: int)
     dst := src1 - src2;
 }
 
-// Note that *not* inlining the shl/shr functions avoids timeouts. It appears that Z3 can reason
-// better about this if it is an axiomatized function.
+// uninterpreted function to return an undefined value.
+function $undefined_int(): int;
+
+// Recursive exponentiation function
+// Undefined unless e >=0.  $pow(0,0) is also undefined.
+function $pow(n: int, e: int): int {
+    if n != 0 && e == 0 then 1
+    else if e > 0 then n * $pow(n, e - 1)
+    else $undefined_int()
+}
+
 function $shl(src1: int, p: int): int {
-    if p == 8 then src1 * 256
-    else if p == 16 then src1 * 65536
-    else if p == 32 then src1 * 4294967296
-    else if p == 64 then src1 * 18446744073709551616
-    // Value is undefined, otherwise.
-    else -1
+    src1 * $pow(2, p)
 }
 
 function $shr(src1: int, p: int): int {
-    if p == 8 then src1 div 256
-    else if p == 16 then src1 div 65536
-    else if p == 32 then src1 div 4294967296
-    else if p == 64 then src1 div 18446744073709551616
-    // Value is undefined, otherwise.
-    else -1
+    src1 div $pow(2, p)
 }
 
-// TODO: fix this and $Shr to drop bits on overflow. Requires $Shl8, $Shl64, and $Shl128
-procedure {:inline 1} $Shl(src1: int, src2: int) returns (dst: int)
+// We need to know the size of the destination in order to drop bits
+// that have been shifted left more than that, so we have $ShlU8/64/128
+procedure {:inline 1} $ShlU8(src1: int, src2: int) returns (dst: int)
 {
     var res: int;
-    res := $shl(src1, src2);
-    assert res >= 0;   // restriction: shift argument must be 8, 16, 32, or 64
-    dst := res;
+    // src2 is a u8
+    assume src2 >= 0 && src2 < 256;
+    dst := $shl(src1, src2) mod 256;
 }
 
+procedure {:inline 1} $ShlU64(src1: int, src2: int) returns (dst: int)
+{
+    var res: int;
+    // src2 is a u8
+    assume src2 >= 0 && src2 < 256;
+    dst := $shl(src1, src2) mod 18446744073709551616;
+}
+
+procedure {:inline 1} $ShlU128(src1: int, src2: int) returns (dst: int)
+{
+    var res: int;
+    // src2 is a u8
+    assume src2 >= 0 && src2 < 256;
+    dst := $shl(src1, src2) mod 340282366920938463463374607431768211456;
+}
+
+// We don't need to know the size of destination, so no $ShrU8, etc.
 procedure {:inline 1} $Shr(src1: int, src2: int) returns (dst: int)
 {
     var res: int;
-    res := $shr(src1, src2);
-    assert res >= 0;   // restriction: shift argument must be 8, 16, 32, or 64
-    dst := res;
+    // src2 is a u8
+    assume src2 >= 0 && src2 < 256;
+    dst := $shr(src1, src2);
 }
 
 procedure {:inline 1} $MulU8(src1: int, src2: int) returns (dst: int)
@@ -466,6 +503,27 @@ function {:inline} $SliceVecByRange<T>(v: Vec T, r: $Range): Vec T {
 {%- endfor %}
 
 // ==================================================================================
+// Native Table
+
+{%- for instance in table_key_instances %}
+
+// ----------------------------------------------------------------------------------
+// Native Table key encoding for type `{{instance.suffix}}`
+
+{{ native::table_key_encoding(instance=instance) -}}
+{%- endfor %}
+
+{%- for impl in table_instances %}
+{%- for instance in impl.insts %}
+
+// ----------------------------------------------------------------------------------
+// Native Table implementation for type `({{instance.0.suffix}},{{instance.1.suffix}})`
+
+{{ native::table_module(impl=impl, instance=instance) -}}
+{%- endfor %}
+{%- endfor %}
+
+// ==================================================================================
 // Native Hash
 
 // Hash is modeled as an otherwise uninterpreted injection.
@@ -479,37 +537,57 @@ function {:inline} $SliceVecByRange<T>(v: Vec T, r: $Range): Vec T {
 // assert that sha2/3 are injections without using global quantified axioms.
 
 
-function $1_Hash_sha2(val: Vec int): Vec int;
+function $1_hash_sha2(val: Vec int): Vec int;
 
 // This says that Hash_sha2 is bijective.
-axiom (forall v1,v2: Vec int :: {$1_Hash_sha2(v1), $1_Hash_sha2(v2)}
-       $IsEqual'vec'u8''(v1, v2) <==> $IsEqual'vec'u8''($1_Hash_sha2(v1), $1_Hash_sha2(v2)));
+axiom (forall v1,v2: Vec int :: {$1_hash_sha2(v1), $1_hash_sha2(v2)}
+       $IsEqual'vec'u8''(v1, v2) <==> $IsEqual'vec'u8''($1_hash_sha2(v1), $1_hash_sha2(v2)));
 
-procedure $1_Hash_sha2_256(val: Vec int) returns (res: Vec int);
-ensures res == $1_Hash_sha2(val);     // returns Hash_sha2 Value
+procedure $1_hash_sha2_256(val: Vec int) returns (res: Vec int);
+ensures res == $1_hash_sha2(val);     // returns Hash_sha2 Value
 ensures $IsValid'vec'u8''(res);    // result is a legal vector of U8s.
 ensures LenVec(res) == 32;               // result is 32 bytes.
 
 // Spec version of Move native function.
-function {:inline} $1_Hash_$sha2_256(val: Vec int): Vec int {
-    $1_Hash_sha2(val)
+function {:inline} $1_hash_$sha2_256(val: Vec int): Vec int {
+    $1_hash_sha2(val)
 }
 
 // similarly for Hash_sha3
-function $1_Hash_sha3(val: Vec int): Vec int;
+function $1_hash_sha3(val: Vec int): Vec int;
 
-axiom (forall v1,v2: Vec int :: {$1_Hash_sha3(v1), $1_Hash_sha3(v2)}
-       $IsEqual'vec'u8''(v1, v2) <==> $IsEqual'vec'u8''($1_Hash_sha3(v1), $1_Hash_sha3(v2)));
+axiom (forall v1,v2: Vec int :: {$1_hash_sha3(v1), $1_hash_sha3(v2)}
+       $IsEqual'vec'u8''(v1, v2) <==> $IsEqual'vec'u8''($1_hash_sha3(v1), $1_hash_sha3(v2)));
 
-procedure $1_Hash_sha3_256(val: Vec int) returns (res: Vec int);
-ensures res == $1_Hash_sha3(val);     // returns Hash_sha3 Value
+procedure $1_hash_sha3_256(val: Vec int) returns (res: Vec int);
+ensures res == $1_hash_sha3(val);     // returns Hash_sha3 Value
 ensures $IsValid'vec'u8''(res);    // result is a legal vector of U8s.
 ensures LenVec(res) == 32;               // result is 32 bytes.
 
 // Spec version of Move native function.
-function {:inline} $1_Hash_$sha3_256(val: Vec int): Vec int {
-    $1_Hash_sha3(val)
+function {:inline} $1_hash_$sha3_256(val: Vec int): Vec int {
+    $1_hash_sha3(val)
 }
+
+// ==================================================================================
+// Native string
+
+// TODO: correct implementation of strings
+
+procedure {:inline 1} $1_string_internal_check_utf8(x: Vec int) returns (r: bool) {
+}
+
+procedure {:inline 1} $1_string_internal_sub_string(x: Vec int, i: int, j: int) returns (r: Vec int) {
+}
+
+procedure {:inline 1} $1_string_internal_index_of(x: Vec int, y: Vec int) returns (r: int) {
+}
+
+procedure {:inline 1} $1_string_internal_is_char_boundary(x: Vec int, i: int) returns (r: bool) {
+}
+
+
+
 
 // ==================================================================================
 // Native diem_account
@@ -549,18 +627,18 @@ function {:inline} $IsEqual'signer'(s1: $signer, s2: $signer): bool {
     s1 == s2
 }
 
-procedure {:inline 1} $1_Signer_borrow_address(signer: $signer) returns (res: int) {
+procedure {:inline 1} $1_signer_borrow_address(signer: $signer) returns (res: int) {
     res := $addr#$signer(signer);
 }
 
-function {:inline} $1_Signer_$borrow_address(signer: $signer): int
+function {:inline} $1_signer_$borrow_address(signer: $signer): int
 {
     $addr#$signer(signer)
 }
 
-function $1_Signer_is_txn_signer(s: $signer): bool;
+function $1_signer_is_txn_signer(s: $signer): bool;
 
-function $1_Signer_is_txn_signer_addr(a: int): bool;
+function $1_signer_is_txn_signer_addr(a: int): bool;
 
 
 // ==================================================================================
@@ -594,7 +672,7 @@ procedure {:inline 1} $1_Signature_ed25519_verify(
 
 
 // ==================================================================================
-// Native BCS::serialize
+// Native bcs::serialize
 
 {%- for instance in bcs_instances %}
 
@@ -614,14 +692,14 @@ procedure {:inline 1} $1_Signature_ed25519_verify(
 {% set_global emit_generic_event = false %}
 
 // Generic code for dealing with mutations (havoc) still requires type and memory declarations.
-type $1_Event_EventHandleGenerator;
-var $1_Event_EventHandleGenerator_$memory: $Memory $1_Event_EventHandleGenerator;
+type $1_event_EventHandleGenerator;
+var $1_event_EventHandleGenerator_$memory: $Memory $1_event_EventHandleGenerator;
 
 // Abstract type of event handles.
-type $1_Event_EventHandle;
+type $1_event_EventHandle;
 
 // Global state to implement uniqueness of event handles.
-var $1_Event_EventHandles: [$1_Event_EventHandle]bool;
+var $1_event_EventHandles: [$1_event_EventHandle]bool;
 
 // Universal representation of an an event. For each concrete event type, we generate a constructor.
 type {:datatype} $EventRep;
@@ -629,7 +707,7 @@ type {:datatype} $EventRep;
 // Representation of EventStore that consists of event streams.
 type {:datatype} $EventStore;
 function {:constructor} $EventStore(
-    counter: int, streams: [$1_Event_EventHandle]Multiset $EventRep): $EventStore;
+    counter: int, streams: [$1_event_EventHandle]Multiset $EventRep): $EventStore;
 
 // Global state holding EventStore.
 var $es: $EventStore;
@@ -640,7 +718,7 @@ procedure {:inline 1} $InitEventStore() {
 
 function {:inline} $EventStore__is_empty(es: $EventStore): bool {
     (counter#$EventStore(es) == 0) &&
-    (forall handle: $1_Event_EventHandle ::
+    (forall handle: $1_event_EventHandle ::
         (var stream := streams#$EventStore(es)[handle];
         IsEmptyMultiset(stream)))
 }
@@ -648,7 +726,7 @@ function {:inline} $EventStore__is_empty(es: $EventStore): bool {
 // This function returns (es1 - es2). This function assumes that es2 is a subset of es1.
 function {:inline} $EventStore__subtract(es1: $EventStore, es2: $EventStore): $EventStore {
     $EventStore(counter#$EventStore(es1)-counter#$EventStore(es2),
-        (lambda handle: $1_Event_EventHandle ::
+        (lambda handle: $1_event_EventHandle ::
         SubtractMultiset(
             streams#$EventStore(es1)[handle],
             streams#$EventStore(es2)[handle])))
@@ -656,7 +734,7 @@ function {:inline} $EventStore__subtract(es1: $EventStore, es2: $EventStore): $E
 
 function {:inline} $EventStore__is_subset(es1: $EventStore, es2: $EventStore): bool {
     (counter#$EventStore(es1) <= counter#$EventStore(es2)) &&
-    (forall handle: $1_Event_EventHandle ::
+    (forall handle: $1_event_EventHandle ::
         IsSubsetMultiset(
             streams#$EventStore(es1)[handle],
             streams#$EventStore(es2)[handle]

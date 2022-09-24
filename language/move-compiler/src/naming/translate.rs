@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -16,6 +17,8 @@ use crate::{
 use move_ir_types::location::*;
 use move_symbol_pool::Symbol;
 use std::collections::BTreeMap;
+
+use super::fake_natives;
 
 //**************************************************************************************************
 // Context
@@ -57,18 +60,15 @@ impl<'env> Context<'env> {
     ) -> Self {
         use ResolvedType as RT;
         let all_modules = || {
-            prog.modules.key_cloned_iter().chain(
-                pre_compiled_lib
-                    .iter()
-                    .map(|pre_compiled| {
-                        pre_compiled
-                            .expansion
-                            .modules
-                            .key_cloned_iter()
-                            .filter(|(mident, _m)| !prog.modules.contains_key(mident))
-                    })
-                    .flatten(),
-            )
+            prog.modules
+                .key_cloned_iter()
+                .chain(pre_compiled_lib.iter().flat_map(|pre_compiled| {
+                    pre_compiled
+                        .expansion
+                        .modules
+                        .key_cloned_iter()
+                        .filter(|(mident, _m)| !prog.modules.contains_key(mident))
+                }))
         };
         let scoped_types = all_modules()
             .map(|(mident, mdef)| {
@@ -359,6 +359,7 @@ fn module(
 ) -> N::ModuleDefinition {
     context.current_module = Some(ident);
     let E::ModuleDefinition {
+        package_name,
         attributes,
         loc: _loc,
         is_source_module,
@@ -379,7 +380,7 @@ fn module(
     });
     let functions = efunctions.map(|name, f| {
         context.restore_unscoped(unscoped.clone());
-        function(context, name, f)
+        function(context, Some(ident), name, f)
     });
     let constants = econstants.map(|name, c| {
         context.restore_unscoped(unscoped.clone());
@@ -387,6 +388,7 @@ fn module(
     });
     context.restore_unscoped(unscoped);
     N::ModuleDefinition {
+        package_name,
         attributes,
         is_source_module,
         dependency_order,
@@ -409,6 +411,7 @@ fn scripts(
 
 fn script(context: &mut Context, escript: E::Script) -> N::Script {
     let E::Script {
+        package_name,
         attributes,
         loc,
         immediate_neighbors: _,
@@ -428,9 +431,10 @@ fn script(context: &mut Context, escript: E::Script) -> N::Script {
         constant(context, name, c)
     });
     context.restore_unscoped(inner_unscoped);
-    let function = function(context, function_name, efunction);
+    let function = function(context, None, function_name, efunction);
     context.restore_unscoped(outer_unscoped);
     N::Script {
+        package_name,
         attributes,
         loc,
         constants,
@@ -475,19 +479,35 @@ fn friend(context: &mut Context, mident: ModuleIdent, friend: E::Friend) -> Opti
 // Functions
 //**************************************************************************************************
 
-fn function(context: &mut Context, _name: FunctionName, f: E::Function) -> N::Function {
-    let attributes = f.attributes;
-    let visibility = f.visibility;
-    let signature = function_signature(context, f.signature);
-    let acquires = function_acquires(context, f.acquires);
-    let body = function_body(context, f.body);
-    N::Function {
+fn function(
+    context: &mut Context,
+    module_opt: Option<ModuleIdent>,
+    name: FunctionName,
+    ef: E::Function,
+) -> N::Function {
+    let E::Function {
         attributes,
+        loc: _,
         visibility,
+        entry,
         signature,
         acquires,
         body,
-    }
+        specs: _,
+    } = ef;
+    let signature = function_signature(context, signature);
+    let acquires = function_acquires(context, acquires);
+    let body = function_body(context, body);
+    let f = N::Function {
+        attributes,
+        visibility,
+        entry,
+        signature,
+        acquires,
+        body,
+    };
+    fake_natives::function(context.env, module_opt, name, &f);
+    f
 }
 
 fn function_signature(context: &mut Context, sig: E::FunctionSignature) -> N::FunctionSignature {
@@ -1164,8 +1184,8 @@ fn resolve_builtin_function(
             );
             // TODO make this a tip/hint?
             let help_msg = format!(
-                "Replace with '{0}!'. \
-                '{0}' has been replaced with a '{0}!' built-in macro so that arguments are no longer eagerly evaluated",
+                "Replace with '{0}!'. '{0}' has been replaced with a '{0}!' built-in macro so \
+                 that arguments are no longer eagerly evaluated",
                 B::ASSERT_MACRO
             );
             context.env.add_diag(diag!(

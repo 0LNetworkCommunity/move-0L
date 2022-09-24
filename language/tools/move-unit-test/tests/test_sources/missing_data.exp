@@ -1,5 +1,7 @@
 Running Move unit tests
 [ FAIL    ] 0x1::MissingData::missing_data
+0x1::MissingData::missing_data
+Output: Ok(ChangeSet { accounts: {} })
 
 Test failures:
 
@@ -19,6 +21,7 @@ Failures in 0x1::MissingData:
 │     major_status: MISSING_DATA,
 │     sub_status: None,
 │     message: None,
+│     exec_state: None,
 │     location: Module(
 │         ModuleId {
 │             address: 00000000000000000000000000000001,

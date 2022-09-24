@@ -1,10 +1,13 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    expansion::ast::{Attributes, Fields, Friend, ModuleIdent, SpecId, Value},
+    expansion::ast::{Attributes, Fields, Friend, ModuleIdent, SpecId, Value, Visibility},
     naming::ast::{FunctionSignature, StructDefinition, Type, TypeName_, Type_},
-    parser::ast::{BinOp, ConstantName, Field, FunctionName, StructName, UnaryOp, Var, Visibility},
+    parser::ast::{
+        BinOp, ConstantName, Field, FunctionName, StructName, UnaryOp, Var, ENTRY_MODIFIER,
+    },
     shared::{ast_debug::*, unique_map::UniqueMap},
 };
 use move_ir_types::location::*;
@@ -30,6 +33,8 @@ pub struct Program {
 
 #[derive(Debug, Clone)]
 pub struct Script {
+    // package name metadata from compiler arguments, not used for any language rules
+    pub package_name: Option<Symbol>,
     pub attributes: Attributes,
     pub loc: Loc,
     pub constants: UniqueMap<ConstantName, Constant>,
@@ -43,6 +48,8 @@ pub struct Script {
 
 #[derive(Debug, Clone)]
 pub struct ModuleDefinition {
+    // package name metadata from compiler arguments, not used for any language rules
+    pub package_name: Option<Symbol>,
     pub attributes: Attributes,
     pub is_source_module: bool,
     /// `dependency_order` is the topological order/rank in the dependency graph.
@@ -68,6 +75,7 @@ pub type FunctionBody = Spanned<FunctionBody_>;
 pub struct Function {
     pub attributes: Attributes,
     pub visibility: Visibility,
+    pub entry: Option<Loc>,
     pub signature: FunctionSignature,
     pub acquires: BTreeMap<StructName, Loc>,
     pub body: FunctionBody,
@@ -117,7 +125,7 @@ pub struct ModuleCall {
     pub acquires: BTreeMap<StructName, Loc>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum BuiltinFunction_ {
     MoveTo(Type),
@@ -265,12 +273,16 @@ impl AstDebug for Program {
 impl AstDebug for Script {
     fn ast_debug(&self, w: &mut AstWriter) {
         let Script {
+            package_name,
             attributes,
             loc: _loc,
             constants,
             function_name,
             function,
         } = self;
+        if let Some(n) = package_name {
+            w.writeln(&format!("{}", n))
+        }
         attributes.ast_debug(w);
         for cdef in constants.key_cloned_iter() {
             cdef.ast_debug(w);
@@ -283,6 +295,7 @@ impl AstDebug for Script {
 impl AstDebug for ModuleDefinition {
     fn ast_debug(&self, w: &mut AstWriter) {
         let ModuleDefinition {
+            package_name,
             attributes,
             is_source_module,
             dependency_order,
@@ -291,6 +304,9 @@ impl AstDebug for ModuleDefinition {
             constants,
             functions,
         } = self;
+        if let Some(n) = package_name {
+            w.writeln(&format!("{}", n))
+        }
         attributes.ast_debug(w);
         if *is_source_module {
             w.writeln("library module")
@@ -324,6 +340,7 @@ impl AstDebug for (FunctionName, &Function) {
             Function {
                 attributes,
                 visibility,
+                entry,
                 signature,
                 acquires,
                 body,
@@ -331,6 +348,9 @@ impl AstDebug for (FunctionName, &Function) {
         ) = self;
         attributes.ast_debug(w);
         visibility.ast_debug(w);
+        if entry.is_some() {
+            w.write(&format!("{} ", ENTRY_MODIFIER));
+        }
         if let FunctionBody_::Native = &body.value {
             w.write("native ");
         }

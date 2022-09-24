@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -29,11 +30,17 @@ use std::collections::BTreeMap;
 /// compared.
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Type {
+    #[serde(rename = "bool")]
     Bool,
+    #[serde(rename = "u8")]
     U8,
+    #[serde(rename = "u64")]
     U64,
+    #[serde(rename = "u128")]
     U128,
+    #[serde(rename = "address")]
     Address,
+    #[serde(rename = "signer")]
     Signer,
     Struct {
         address: AccountAddress,
@@ -41,6 +48,7 @@ pub enum Type {
         name: Identifier,
         type_arguments: Vec<Type>,
     },
+    #[serde(rename = "vector")]
     Vector(Box<Type>),
     TypeParameter(TypeParameterIndex),
     Reference(Box<Type>),
@@ -51,7 +59,7 @@ pub enum Type {
 /// metadata that it is ignored by the VM. The reason: names are important to clients. We would
 /// want a change from `Account { bal: u64, seq: u64 }` to `Account { seq: u64, bal: u64 }` to be
 /// marked as incompatible. Not safe to compare without an enclosing `Struct`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Field {
     pub name: Identifier,
     pub type_: Type,
@@ -59,7 +67,7 @@ pub struct Field {
 
 /// Normalized version of a `StructDefinition`. Not safe to compare without an associated
 /// `ModuleId` or `Module`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Struct {
     pub abilities: AbilitySet,
     pub type_parameters: Vec<StructTypeParameter>,
@@ -68,9 +76,10 @@ pub struct Struct {
 
 /// Normalized version of a `FunctionDefinition`. Not safe to compare without an associated
 /// `ModuleId` or `Module`.
-#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Function {
     pub visibility: Visibility,
+    pub is_entry: bool,
     pub type_parameters: Vec<AbilitySet>,
     pub parameters: Vec<Type>,
     pub return_: Vec<Type>,
@@ -78,8 +87,9 @@ pub struct Function {
 
 /// Normalized version of a `CompiledModule`: its address, name, struct declarations, and public
 /// function declarations.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Module {
+    pub file_format_version: u32,
     pub address: AccountAddress,
     pub name: Identifier,
     pub friends: Vec<ModuleId>,
@@ -97,14 +107,19 @@ impl Module {
         let exposed_functions = m
             .function_defs()
             .iter()
-            .filter(|func_def| match func_def.visibility {
-                Visibility::Public | Visibility::Script | Visibility::Friend => true,
-                Visibility::Private => false,
+            .filter(|func_def| {
+                let is_vis_exposed = match func_def.visibility {
+                    Visibility::Public | Visibility::Friend => true,
+                    Visibility::Private => false,
+                };
+                let is_entry_exposed = func_def.is_entry;
+                is_vis_exposed || is_entry_exposed
             })
             .map(|func_def| Function::new(m, func_def))
             .collect();
 
         Self {
+            file_format_version: m.version(),
             address: *m.address(),
             name: m.name().to_owned(),
             friends,
@@ -265,7 +280,7 @@ impl Struct {
     pub fn new(m: &CompiledModule, def: &StructDefinition) -> (Identifier, Self) {
         let handle = m.struct_handle_at(def.struct_handle);
         let fields = match &def.field_information {
-            StructFieldInformation::Native => panic!("Can't extract  for native struct"),
+            StructFieldInformation::Native => panic!("Can't extract for native struct"),
             StructFieldInformation::Declared(fields) => {
                 fields.iter().map(|f| Field::new(m, f)).collect()
             }
@@ -291,6 +306,7 @@ impl Function {
         let name = m.identifier_at(fhandle.name).to_owned();
         let f = Function {
             visibility: def.visibility,
+            is_entry: def.is_entry,
             type_parameters: fhandle.type_parameters.clone(),
             parameters: m
                 .signature_at(fhandle.parameters)
@@ -366,16 +382,16 @@ impl std::fmt::Display for Type {
                 }
                 Ok(())
             }
-            Type::Vector(ty) => write!(f, "Vector<{}>", ty),
-            Type::U8 => write!(f, "U8"),
-            Type::U64 => write!(f, "U64"),
-            Type::U128 => write!(f, "U128"),
-            Type::Address => write!(f, "Address"),
-            Type::Signer => write!(f, "Signer"),
-            Type::Bool => write!(f, "Bool"),
+            Type::Vector(ty) => write!(f, "vector<{}>", ty),
+            Type::U8 => write!(f, "u8"),
+            Type::U64 => write!(f, "u64"),
+            Type::U128 => write!(f, "u128"),
+            Type::Address => write!(f, "address"),
+            Type::Signer => write!(f, "signer"),
+            Type::Bool => write!(f, "bool"),
             Type::Reference(r) => write!(f, "&{}", r),
             Type::MutableReference(r) => write!(f, "&mut {}", r),
-            Type::TypeParameter(i) => write!(f, "#{:?}", i),
+            Type::TypeParameter(i) => write!(f, "T{:?}", i),
         }
     }
 }

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
@@ -231,12 +232,11 @@ impl ExecCoverageMap {
 
         let compiled_modules = modules
             .into_iter()
-            .map(|(_, module_map)| {
+            .flat_map(|(_, module_map)| {
                 module_map
                     .into_iter()
                     .map(|(_, (module_path, compiled_module))| (module_path, compiled_module))
             })
-            .flatten()
             .collect();
 
         ExecCoverageMapWithModules {

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -103,6 +104,9 @@ impl<'a> EliminateImmRefs<'a> {
                         srcs,
                         aa,
                     ));
+                }
+                Destroy if self.is_imm_ref(srcs[0]) => {
+                    // skip the destroy on an immutable ref
                 }
                 _ => self.builder.emit(Call(attr_id, dests, op, srcs, aa)),
             },

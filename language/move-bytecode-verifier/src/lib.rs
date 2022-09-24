@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
@@ -25,9 +26,15 @@ pub mod verifier;
 pub use check_duplication::DuplicationChecker;
 pub use code_unit_verifier::CodeUnitVerifier;
 pub use instruction_consistency::InstructionConsistency;
+pub use script_signature::{
+    legacy_script_signature_checks, no_additional_script_signature_checks, FnCheckScriptSignature,
+};
 pub use signature::SignatureChecker;
 pub use struct_defs::RecursiveStructDefChecker;
-pub use verifier::{verify_module, verify_script};
+pub use verifier::{
+    verify_module, verify_module_with_config, verify_script, verify_script_with_config,
+    VerifierConfig,
+};
 
 mod acquires_list_verifier;
 mod locals_safety;

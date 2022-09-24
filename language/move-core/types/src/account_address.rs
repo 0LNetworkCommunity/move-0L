@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 
@@ -18,10 +19,26 @@ impl AccountAddress {
     }
 
     /// The number of bytes in an address.
-    pub const LENGTH: usize = 16;
+    /// Default to 16 bytes, can be set to 20 bytes with address20 feature.
+    pub const LENGTH: usize = if cfg!(feature = "address20") {
+        20
+    } else if cfg!(feature = "address32") {
+        32
+    } else {
+        16
+    };
 
     /// Hex address: 0x0
     pub const ZERO: Self = Self([0u8; Self::LENGTH]);
+
+    /// Hex address: 0x1
+    pub const ONE: Self = Self::get_hex_address_one();
+
+    const fn get_hex_address_one() -> Self {
+        let mut addr = [0u8; AccountAddress::LENGTH];
+        addr[AccountAddress::LENGTH - 1] = 1u8;
+        Self(addr)
+    }
 
     pub fn random() -> Self {
         let mut rng = OsRng;
@@ -103,13 +120,13 @@ impl std::ops::Deref for AccountAddress {
 
 impl fmt::Display for AccountAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:X}", self)
+        write!(f, "{:x}", self)
     }
 }
 
 impl fmt::Debug for AccountAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:X}", self)
+        write!(f, "{:x}", self)
     }
 }
 
@@ -207,7 +224,12 @@ impl FromStr for AccountAddress {
     type Err = AccountAddressParseError;
 
     fn from_str(s: &str) -> Result<Self, AccountAddressParseError> {
-        Self::from_hex(s)
+        // Accept 0xADDRESS or ADDRESS
+        if let Ok(address) = AccountAddress::from_hex_literal(s) {
+            Ok(address)
+        } else {
+            Self::from_hex(s)
+        }
     }
 }
 
@@ -218,7 +240,7 @@ impl<'de> Deserialize<'de> for AccountAddress {
     {
         if deserializer.is_human_readable() {
             let s = <String>::deserialize(deserializer)?;
-            AccountAddress::from_hex(s).map_err(D::Error::custom)
+            AccountAddress::from_str(&s).map_err(D::Error::custom)
         } else {
             // In order to preserve the Serde data model and help analysis tools,
             // make sure to wrap our value in a container with the same name
@@ -252,7 +274,11 @@ pub struct AccountAddressParseError;
 
 impl fmt::Display for AccountAddressParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
-        write!(f, "unable to parse AccoutAddress")
+        write!(
+            f,
+            "Unable to parse AccountAddress (must be hex string of length {})",
+            AccountAddress::LENGTH
+        )
     }
 }
 
@@ -275,8 +301,8 @@ mod tests {
 
         let address = AccountAddress::from_hex(hex).unwrap();
 
-        assert_eq!(format!("{}", address), upper_hex);
-        assert_eq!(format!("{:?}", address), upper_hex);
+        assert_eq!(format!("{}", address), hex);
+        assert_eq!(format!("{:?}", address), hex);
         assert_eq!(format!("{:X}", address), upper_hex);
         assert_eq!(format!("{:x}", address), hex);
 

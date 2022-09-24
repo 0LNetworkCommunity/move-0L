@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //**************************************************************************************************
@@ -203,6 +204,7 @@ codes!(
         InvalidReturn:
             { msg: "invalid return of locally borrowed state", severity: NonblockingError },
         InvalidTransfer: { msg: "invalid transfer of references", severity: NonblockingError },
+        AmbiguousVariableUsage: { msg: "ambiguous usage of variable", severity: NonblockingError },
     ],
     BytecodeGeneration: [
         UnfoldableConstant: { msg: "cannot compute constant value", severity: NonblockingError },
@@ -222,6 +224,8 @@ codes!(
         InvalidValue: { msg: "invalid attribute value", severity: NonblockingError },
         InvalidUsage: { msg: "invalid usage of known attribute", severity: NonblockingError },
         InvalidTest: { msg: "unable to generate test", severity: NonblockingError },
+        InvalidBytecodeInst:
+            { msg: "unknown bytecode instruction function", severity: NonblockingError },
     ],
     Tests: [
         TestFailed: { msg: "test failure", severity: BlockingError },
@@ -230,6 +234,9 @@ codes!(
         BytecodeGeneration: { msg: "BYTECODE GENERATION FAILED", severity: Bug },
         BytecodeVerification: { msg: "BYTECODE VERIFICATION FAILED", severity: Bug },
     ],
+    Derivation: [
+        DeriveFailed: { msg: "attribute derivation failed", severity: BlockingError }
+    ]
 );
 
 //**************************************************************************************************

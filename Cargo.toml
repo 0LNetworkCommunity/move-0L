@@ -2,11 +2,20 @@
 resolver = "2"
 
 members = [
-    "crates/workspace-hack",
     "devtools/x",
     "devtools/x-core",
     "devtools/x-lint",
     "language/benchmarks",
+    "language/documentation/examples/diem-framework/crates/cli",
+    "language/documentation/examples/diem-framework/crates/crypto",
+    "language/documentation/examples/diem-framework/crates/crypto-derive",
+    "language/documentation/examples/diem-framework/crates/natives",
+    "language/evm/exec-utils",
+    "language/evm/extract-ethereum-abi",
+    "language/evm/move-ethereum-abi",
+    "language/evm/move-to-yul",
+    "language/extensions/async/move-async-vm",
+    "language/extensions/move-table-extension",
     "language/move-analyzer",
     "language/move-binary-format",
     "language/move-binary-format/serializer-tests",
@@ -49,7 +58,6 @@ members = [
     "language/testing-infra/module-generation",
     "language/testing-infra/test-generation",
     "language/testing-infra/transactional-test-runner",
-    "language/tools/mirai-dataflow-analysis",
     "language/tools/move-bytecode-utils",
     "language/tools/move-bytecode-viewer",
     "language/tools/move-cli",
@@ -70,6 +78,8 @@ members = [
 #
 # For more, see the "Conditional compilation for tests" section in documentation/coding_guidelines.md.
 default-members = [
+    "language/evm/extract-ethereum-abi",
+    "language/evm/move-to-yul",
     "language/move-analyzer",
     "language/move-ir-compiler",
     "language/move-prover",
@@ -85,12 +95,19 @@ default-members = [
     "language/tools/move-unit-test",
 ]
 
-[profile.release]
-debug = true
+# [profile.release]
+# debug = true
 
 [profile.bench]
 debug = true
 
-# Build guppy in opt mode so that x commands are faster.
-[profile.dev.package.guppy]
+[profile.dev]
+debug = true
+
+# use release settings to reduce memory pressure in the linking step in CI
+[profile.ci]
+inherits = "test"
 opt-level = 3
+debug = 0 # for saving disk space during linking
+incremental = false
+codegen-units = 16

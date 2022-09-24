@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Contains AST definitions for the specification language fragments of the Move language.
@@ -78,7 +79,7 @@ pub enum Attribute {
 // =================================================================================================
 /// # Conditions
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ConditionKind {
     LetPost(Symbol),
     LetPre(Symbol),
@@ -689,7 +690,7 @@ impl ExpData {
         F: FnMut(NodeId) -> Option<NodeId>,
     {
         ExpRewriter {
-            exp_rewriter: &mut |e| Err(e),
+            exp_rewriter: &mut Err,
             node_rewriter,
         }
         .rewrite_exp(exp)
@@ -956,6 +957,7 @@ pub enum Value {
     Number(BigInt),
     Bool(bool),
     ByteArray(Vec<u8>),
+    AddressArray(Vec<BigUint>),
 }
 
 impl fmt::Display for Value {
@@ -966,6 +968,7 @@ impl fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             // TODO(tzakian): Figure out a better story for byte array displays
             Value::ByteArray(bytes) => write!(f, "{:?}", bytes),
+            Value::AddressArray(array) => write!(f, "{:?}", array),
         }
     }
 }

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! This module supports translations of specifications as found in the move-model to
@@ -116,8 +117,7 @@ impl TranslatedSpec {
                 .chain(
                     self.aborts_with
                         .iter()
-                        .map(|(_, codes)| codes.iter())
-                        .flatten()
+                        .flat_map(|(_, codes)| codes.iter())
                         .map(|c| eq_code(c)),
                 ),
         )

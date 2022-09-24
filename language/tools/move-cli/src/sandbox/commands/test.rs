@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{sandbox::utils::module, DEFAULT_BUILD_DIR, DEFAULT_STORAGE_DIR};
@@ -6,7 +7,7 @@ use crate::{sandbox::utils::module, DEFAULT_BUILD_DIR, DEFAULT_STORAGE_DIR};
 use move_command_line_common::{
     env::read_bool_env_var,
     files::{find_filenames, path_to_string},
-    testing::{format_diff, read_env_update_baseline, EXP_EXT},
+    testing::{add_update_baseline_fix, format_diff, read_env_update_baseline, EXP_EXT},
 };
 use move_compiler::command_line::COLOR_MODE_ENV_VAR;
 use move_coverage::coverage_map::{CoverageMap, ExecCoverageMapWithModules};
@@ -19,6 +20,7 @@ use move_package::{
 use std::{
     collections::{BTreeMap, HashMap},
     env,
+    fmt::Write as FmtWrite,
     fs::{self, File},
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
@@ -69,8 +71,7 @@ fn collect_coverage(
     )?
     .into_compiled_package()?;
     let src_modules = pkg
-        .modules()?
-        .into_iter()
+        .all_modules()
         .map(|unit| {
             let absolute_path = path_to_string(&unit.source_path.canonicalize()?)?;
             Ok((absolute_path, module(&unit.unit)?.clone()))
@@ -222,6 +223,29 @@ pub fn run_one(
     env::set_var(COLOR_MODE_ENV_VAR, "NONE");
     for args_line in args_file {
         let args_line = args_line?;
+
+        if let Some(external_cmd) = args_line.strip_prefix('>') {
+            let external_cmd = external_cmd.trim_start();
+            let mut cmd_iter = external_cmd.split_ascii_whitespace();
+
+            let external_program = cmd_iter.next().expect("empty external command");
+
+            let mut command = Command::new(external_program);
+            command.args(cmd_iter);
+            if let Some(work_dir) = temp_dir.as_ref() {
+                command.current_dir(&work_dir.1);
+            } else {
+                command.current_dir(exe_dir);
+            }
+            let cmd_output = command.output()?;
+
+            writeln!(&mut output, "External Command `{}`:", external_cmd)?;
+            output += std::str::from_utf8(&cmd_output.stdout)?;
+            output += std::str::from_utf8(&cmd_output.stderr)?;
+
+            continue;
+        }
+
         if args_line.starts_with('#') {
             // allow comments in args.txt
             continue;
@@ -246,7 +270,7 @@ pub fn run_one(
         }
 
         let cmd_output = cli_command_template().args(args_iter).output()?;
-        output += &format!("Command `{}`:\n", args_line);
+        writeln!(&mut output, "Command `{}`:", args_line)?;
         output += std::str::from_utf8(&cmd_output.stdout)?;
         output += std::str::from_utf8(&cmd_output.stderr)?;
     }
@@ -313,10 +337,11 @@ pub fn run_one(
 
     let expected_output = fs::read_to_string(exp_path).unwrap_or_else(|_| "".to_string());
     if expected_output != output {
-        anyhow::bail!(
+        let msg = format!(
             "Expected output differs from actual output:\n{}",
             format_diff(expected_output, output)
-        )
+        );
+        anyhow::bail!(add_update_baseline_fix(msg))
     } else {
         Ok(cov_info)
     }

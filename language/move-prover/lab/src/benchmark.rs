@@ -1,14 +1,16 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 // Functions for running benchmarks and storing the results as files, as well as reading
 // benchmark data back into memory.
 
 use anyhow::anyhow;
-use clap::{App, Arg};
+use clap::{Arg, Command};
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use itertools::Itertools;
 use log::LevelFilter;
+use move_compiler::shared::PackagePaths;
 use move_model::{
     model::{FunctionEnv, GlobalEnv, ModuleEnv, VerificationScope},
     parse_addresses_from_options, run_model_builder_with_options,
@@ -36,16 +38,16 @@ struct Runner {
 }
 
 pub fn benchmark(args: &[String]) {
-    let cmd_line_parser = App::new("benchmark")
+    let cmd_line_parser = Command::new("benchmark")
         .version("0.1.0")
         .about("Benchmark program for the Move Prover")
         .author("The Diem Core Contributors")
         .arg(
-            Arg::with_name("config")
-                .short("c")
+            Arg::new("config")
+                .short('c')
                 .long("config")
                 .takes_value(true)
-                .multiple(true)
+                .multiple_occurrences(true)
                 .number_of_values(1)
                 .value_name("CONFIG_PATH")
                 .help(
@@ -55,16 +57,16 @@ pub fn benchmark(args: &[String]) {
                 ),
         )
         .arg(
-            Arg::with_name("function")
-                .short("f")
+            Arg::new("function")
+                .short('f')
                 .long("func")
                 .help("whether benchmarking should happen per function; default is per module"),
         )
         .arg(
-            Arg::with_name("dependencies")
+            Arg::new("dependencies")
                 .long("dependency")
-                .short("d")
-                .multiple(true)
+                .short('d')
+                .multiple_occurrences(true)
                 .number_of_values(1)
                 .takes_value(true)
                 .value_name("PATH_TO_DEPENDENCY")
@@ -74,8 +76,8 @@ pub fn benchmark(args: &[String]) {
                 ),
         )
         .arg(
-            Arg::with_name("sources")
-                .multiple(true)
+            Arg::new("sources")
+                .multiple_occurrences(true)
                 .value_name("PATH_TO_SOURCE_FILE")
                 .min_values(1)
                 .help("the source files to verify"),
@@ -127,11 +129,19 @@ fn run_benchmark(
     } else {
         Options::default()
     };
+    let addrs = parse_addresses_from_options(options.move_named_address_values.clone())?;
     let env = run_model_builder_with_options(
-        modules,
-        dep_dirs,
+        vec![PackagePaths {
+            name: None,
+            paths: modules.to_vec(),
+            named_address_map: addrs.clone(),
+        }],
+        vec![PackagePaths {
+            name: None,
+            paths: dep_dirs.to_vec(),
+            named_address_map: addrs,
+        }],
         options.model_builder.clone(),
-        parse_addresses_from_options(options.move_named_address_values.clone())?,
     )?;
     let mut error_writer = StandardStream::stderr(ColorChoice::Auto);
 

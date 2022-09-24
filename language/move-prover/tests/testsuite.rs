@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
@@ -75,21 +76,6 @@ fn get_features() -> &'static [Feature] {
                 runner: |p| test_runner_for_feature(p, get_feature_by_name("default")),
                 enabling_condition: |_, _| true,
             },
-            // Tests with spec simplification pipeline enabled
-            Feature {
-                name: "simplify",
-                flags: &[
-                    "--ignore-pragma-opaque-internal-only",
-                    "--simplify",
-                    "inline",
-                ],
-                inclusion_mode: InclusionMode::Implicit,
-                enable_in_ci: true,
-                only_if_requested: false,
-                separate_baseline: false,
-                runner: |p| test_runner_for_feature(p, get_feature_by_name("simplify")),
-                enabling_condition: |_, _| true,
-            },
             // Tests with cvc5 as a backend for boogie.
             Feature {
                 name: "cvc5",
@@ -156,7 +142,7 @@ fn test_runner_for_feature(path: &Path, feature: &Feature) -> datatest_stable::R
         {
             warn!(
                 "Prover tools are not configured, verification tests will be skipped. \
-        See https://github.com/diem/diem/tree/main/language/move-prover/doc/user/install.md \
+        See https://github.com/move-language/move/tree/main/language/move-prover/doc/user/install.md \
         for instructions."
             );
         }
@@ -171,7 +157,7 @@ fn test_runner_for_feature(path: &Path, feature: &Feature) -> datatest_stable::R
         Err(err) => format!("Move prover returns: {}\n", err),
     };
     if baseline_valid {
-        diags += &String::from_utf8_lossy(&error_writer.into_inner()).to_string();
+        diags += &String::from_utf8_lossy(&error_writer.into_inner());
         if let Some(ref path) = baseline_path {
             verify_or_update_baseline(path.as_path(), &diags)?
         } else if !diags.is_empty() {
@@ -194,6 +180,9 @@ fn get_flags_and_baseline(
     let dep_flags = vec![
         // stdlib is commonly required
         "--dependency=../move-stdlib/sources",
+        "--dependency=../move-stdlib/nursery/sources",
+        // table extension is required
+        "--dependency=../extensions/move-table-extension/sources",
     ];
 
     let (base_flags, baseline_path) =
@@ -215,7 +204,10 @@ fn get_flags_and_baseline(
     let mut flags = base_flags.iter().map(|s| (*s).to_string()).collect_vec();
 
     // Add flag assigning an address to the stdlib.
-    flags.push("--named-addresses=Std=0x1".to_string());
+    flags.push("--named-addresses=std=0x1".to_string());
+
+    // Add flag assigning an address to stdlib extensions.
+    flags.push("--named-addresses=extensions=0x2".to_string());
 
     // Add flags specific to the feature.
     flags.extend(feature.flags.iter().map(|f| f.to_string()));

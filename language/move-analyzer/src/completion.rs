@@ -1,18 +1,17 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::context::Context;
+use crate::{context::Context, symbols::Symbols};
 use lsp_server::Request;
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionParams, Position};
 use move_command_line_common::files::FileHash;
-use move_compiler::{
-    diagnostics::Diagnostic,
-    parser::{
-        keywords::{BUILTINS, CONTEXTUAL_KEYWORDS, KEYWORDS},
-        lexer::{Lexer, Tok},
-    },
+use move_compiler::parser::{
+    keywords::{BUILTINS, CONTEXTUAL_KEYWORDS, KEYWORDS, PRIMITIVE_TYPES},
+    lexer::{Lexer, Tok},
 };
-use std::collections::HashSet;
+use move_symbol_pool::Symbol;
+use std::{collections::HashSet, path::PathBuf};
 
 /// Constructs an `lsp_types::CompletionItem` with the given `label` and `kind`.
 fn completion_item(label: &str, kind: CompletionItemKind) -> CompletionItem {
@@ -33,6 +32,7 @@ fn keywords() -> Vec<CompletionItem> {
     KEYWORDS
         .iter()
         .chain(CONTEXTUAL_KEYWORDS.iter())
+        .chain(PRIMITIVE_TYPES.iter())
         .map(|label| {
             let kind = if label == &"copy" || label == &"move" {
                 CompletionItemKind::Operator
@@ -41,6 +41,14 @@ fn keywords() -> Vec<CompletionItem> {
             };
             completion_item(label, kind)
         })
+        .collect()
+}
+
+/// Return a list of completion items of Move's primitive types
+fn primitive_types() -> Vec<CompletionItem> {
+    PRIMITIVE_TYPES
+        .iter()
+        .map(|label| completion_item(label, CompletionItemKind::Keyword))
         .collect()
 }
 
@@ -53,8 +61,7 @@ fn builtins() -> Vec<CompletionItem> {
 }
 
 /// Lexes the Move source file at the given path and returns a list of completion items
-/// corresponding to the non-keyword identifiers therein. If lexing produces diagnostics, those are
-/// also returned.
+/// corresponding to the non-keyword identifiers therein.
 ///
 /// Currently, this does not perform semantic analysis to determine whether the identifiers
 /// returned are valid at the request's cursor position. However, this list of identifiers is akin
@@ -62,14 +69,13 @@ fn builtins() -> Vec<CompletionItem> {
 /// server did not initialize with a response indicating it's capable of providing completions. In
 /// the future, the server should be modified to return semantically valid completion items, not
 /// simple textual suggestions.
-fn identifiers(buffer: &str) -> (Vec<CompletionItem>, Vec<Diagnostic>) {
+fn identifiers(buffer: &str, symbols: &Symbols, path: &PathBuf) -> Vec<CompletionItem> {
     let mut lexer = Lexer::new(buffer, FileHash::new(buffer));
-    if let Err(diagnostic) = lexer.advance() {
-        return (vec![], vec![diagnostic]);
+    if lexer.advance().is_err() {
+        return vec![];
     }
 
     let mut ids = HashSet::new();
-    let mut diagnostics = vec![];
     while lexer.peek() != Tok::EOF {
         // Some tokens, such as "phantom", are contextual keywords that are only reserved in
         // certain contexts. Since for now this language server doesn't analyze semantic context,
@@ -82,18 +88,31 @@ fn identifiers(buffer: &str) -> (Vec<CompletionItem>, Vec<Diagnostic>) {
             // context of the request cursor's position.
             ids.insert(lexer.content());
         }
-        if let Err(diagnostic) = lexer.advance() {
-            diagnostics.push(diagnostic)
+        if lexer.advance().is_err() {
+            break;
         }
     }
 
+    let mods_opt = symbols.file_mods().get(path);
+
     // The completion item kind "text" indicates that the item is based on simple textual matching,
     // not any deeper semantic analysis.
-    let items = ids
-        .iter()
-        .map(|label| completion_item(label, CompletionItemKind::Text))
-        .collect();
-    (items, diagnostics)
+    ids.iter()
+        .map(|label| {
+            if let Some(mods) = mods_opt {
+                if mods
+                    .iter()
+                    .any(|m| m.functions().contains_key(&Symbol::from(*label)))
+                {
+                    completion_item(label, CompletionItemKind::Function)
+                } else {
+                    completion_item(label, CompletionItemKind::Text)
+                }
+            } else {
+                completion_item(label, CompletionItemKind::Text)
+            }
+        })
+        .collect()
 }
 
 /// Returns the token corresponding to the "trigger character" that precedes the user's cursor,
@@ -126,27 +145,33 @@ fn get_cursor_token(buffer: &str, position: &Position) -> Option<Tok> {
 /// Sends the given connection a response to a completion request.
 ///
 /// The completions returned depend upon where the user's cursor is positioned.
-pub fn on_completion_request(context: &Context, request: &Request) {
+pub fn on_completion_request(context: &Context, request: &Request, symbols: &Symbols) {
+    eprintln!("handling completion request");
     let parameters = serde_json::from_value::<CompletionParams>(request.params.clone())
-        .expect("could not deserialize request");
+        .expect("could not deserialize completion request");
 
-    let path = parameters.text_document_position.text_document.uri.path();
-    let buffer = context.files.get(path);
+    let path = parameters
+        .text_document_position
+        .text_document
+        .uri
+        .to_file_path()
+        .unwrap();
+    let buffer = context.files.get(&path);
     if buffer.is_none() {
-        eprintln!("Could not read '{}' when handling completion request", path);
+        eprintln!(
+            "Could not read '{:?}' when handling completion request",
+            path
+        );
     }
 
     // The completion items we provide depend upon where the user's cursor is positioned.
-    let cursor = buffer
-        .map(|buf| get_cursor_token(buf, &parameters.text_document_position.position))
-        .flatten();
+    let cursor =
+        buffer.and_then(|buf| get_cursor_token(buf, &parameters.text_document_position.position));
 
     let mut items = vec![];
     match cursor {
         Some(Tok::Colon) => {
-            // If the user's cursor is positioned after a single `:`, do not provide any completion
-            // items at all -- this is a "mis-fire" of the "trigger character" `:`.
-            return;
+            items.extend_from_slice(&primitive_types());
         }
         Some(Tok::Period) | Some(Tok::ColonColon) => {
             // `.` or `::` must be followed by identifiers, which are added to the completion items
@@ -161,30 +186,18 @@ pub fn on_completion_request(context: &Context, request: &Request) {
     }
 
     if let Some(buffer) = &buffer {
-        let (identifiers, diagnostics) = identifiers(buffer);
+        let identifiers = identifiers(buffer, symbols, &path);
         items.extend_from_slice(&identifiers);
-        if !diagnostics.is_empty() {
-            // TODO: A language server is capable of surfacing diagnostics to its client, but to do so
-            // would require us to translate move_compiler's diagnostic location (a private member
-            // represented as a byte offset) to a line and column number. The move_compiler::diagnostics
-            // module currently only allows for printing a set of diagnostics to stderr, but that could
-            // be changed. (If this server *was* to surface diagnostics, it would also be responsible
-            // for notifying the client when the diagnostics were fixed and ought to be cleared. It
-            // would be a poor user experience to only surface and clear diagnostics here, when
-            // responding to a completion request.)
-            eprintln!(
-                "encountered {} diagnostic(s) while lexing '{}'",
-                diagnostics.len(),
-                path
-            );
-        }
     }
 
-    let result = serde_json::to_value(items).expect("could not serialize response");
+    let result = serde_json::to_value(items).expect("could not serialize completion response");
+    eprintln!("about to send completion response");
     let response = lsp_server::Response::new_ok(request.id.clone(), result);
-    context
+    if let Err(err) = context
         .connection
         .sender
         .send(lsp_server::Message::Response(response))
-        .expect("could not send response");
+    {
+        eprintln!("could not send completion response: {:?}", err);
+    }
 }

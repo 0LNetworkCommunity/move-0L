@@ -1,12 +1,14 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 // Functions for running move programs with mutations and reporting errors if found
 
-use clap::{App, Arg};
+use clap::{Arg, Command};
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use itertools::Itertools;
 use log::LevelFilter;
+use move_compiler::shared::PackagePaths;
 use move_model::{
     model::{FunctionEnv, GlobalEnv, VerificationScope},
     options::ModelBuilderOptions,
@@ -31,26 +33,26 @@ struct Runner {
 }
 
 pub fn mutate(args: &[String]) {
-    let cmd_line_parser = App::new("mutation")
+    let cmd_line_parser = Command::new("mutation")
         .version("0.1.0")
         .about("Mutation tool for the move prover")
         .author("The Diem Core Contributors")
         .arg(
-            Arg::with_name("addresses")
+            Arg::new("addresses")
                 .long("address")
-                .short("a")
-                .multiple(true)
+                .short('a')
+                .multiple_occurrences(true)
                 .number_of_values(1)
                 .takes_value(true)
                 .value_name("ADDRESS")
                 .help("Address specified for the move prover"),
         )
         .arg(
-            Arg::with_name("config")
-                .short("c")
+            Arg::new("config")
+                .short('c')
                 .long("config")
                 .takes_value(true)
-                .multiple(true)
+                .multiple_occurrences(true)
                 .number_of_values(1)
                 .value_name("CONFIG_PATH")
                 .help(
@@ -60,10 +62,10 @@ pub fn mutate(args: &[String]) {
                 ),
         )
         .arg(
-            Arg::with_name("dependencies")
+            Arg::new("dependencies")
                 .long("dependency")
-                .short("d")
-                .multiple(true)
+                .short('d')
+                .multiple_occurrences(true)
                 .number_of_values(1)
                 .takes_value(true)
                 .value_name("PATH_TO_DEPENDENCY")
@@ -73,8 +75,8 @@ pub fn mutate(args: &[String]) {
                 ),
         )
         .arg(
-            Arg::with_name("sources")
-                .multiple(true)
+            Arg::new("sources")
+                .multiple_occurrences(true)
                 .value_name("PATH_TO_SOURCE_FILE")
                 .min_values(1)
                 .help("the source files to verify"),
@@ -121,11 +123,19 @@ fn apply_mutation(
     dep_dirs: &[String],
 ) -> anyhow::Result<()> {
     println!("building model");
+    let addrs = parse_addresses_from_options(addresses.to_owned())?;
     let env = run_model_builder_with_options(
-        modules,
-        dep_dirs,
+        vec![PackagePaths {
+            name: None,
+            paths: modules.to_vec(),
+            named_address_map: addrs.clone(),
+        }],
+        vec![PackagePaths {
+            name: None,
+            paths: dep_dirs.to_vec(),
+            named_address_map: addrs,
+        }],
         ModelBuilderOptions::default(),
-        parse_addresses_from_options(addresses.to_owned())?,
     )?;
     let mut error_writer = StandardStream::stderr(ColorChoice::Auto);
     let mut options = if let Some(config_file) = config_file_opt {

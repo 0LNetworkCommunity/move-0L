@@ -12,7 +12,7 @@ By default, structs are linear and ephemeral. By this we mean that they: cannot 
 dropped, and cannot be stored in global storage. This means that all values have to have ownership
 transferred (linear) and the values must be dealt with by the end of the program's execution
 (ephemeral). We can relax this behavior by giving the struct [abilities](./abilities.md) which allow
-values to be copied or dropped and also to be stored in global storage or to define gobal storage
+values to be copied or dropped and also to be stored in global storage or to define global storage
 schemas.
 
 ## Defining Structs
@@ -21,7 +21,7 @@ Structs must be defined inside a module:
 
 ```move
 address 0x2 {
-module M {
+module m {
     struct Foo { x: u64, y: bool }
     struct Bar {}
     struct Baz { foo: Foo, }
@@ -44,7 +44,7 @@ a storage schema), structs can be granted [abilities](./abilities.md) by annotat
 
 ```move=
 address 0x2 {
-module M {
+module m {
     struct Foo has copy, drop { x: u64, y: bool }
 }
 }
@@ -75,7 +75,7 @@ value for each field:
 
 ```move=
 address 0x2 {
-module M {
+module m {
     struct Foo has drop { x: u64, y: bool }
     struct Baz has drop { foo: Foo }
 
@@ -104,7 +104,7 @@ Struct values can be destroyed by binding or assigning them patterns.
 
 ```move=
 address 0x2 {
-module M {
+module m {
     struct Foo { x: u64, y: bool }
     struct Bar { foo: Foo }
     struct Baz {}
@@ -272,14 +272,14 @@ Most struct operations on a struct type `T` can only be performed inside the mod
 - The fields of a struct are only accessible inside the module that defines the struct.
 
 Following these rules, if you want to modify your struct outside the module, you will need to
-provide publis APIs for them. The end of the chapter contains some examples of this.
+provide public APIs for them. The end of the chapter contains some examples of this.
 
 However, struct _types_ are always visible to another module or script:
 
 ```move=
-// M.move
+// m.move
 address 0x2 {
-module M {
+module m {
     struct Foo has drop { x: u64 }
 
     public fun new_foo(): Foo {
@@ -290,22 +290,22 @@ module M {
 ```
 
 ```move=
-// N.move
+// n.move
 address 0x2 {
-module N {
-    use 0x2::M;
+module n {
+    use 0x2::m;
 
     struct Wrapper has drop {
-        foo: M::Foo
+        foo: m::Foo
     }
 
-    fun f1(foo: M::Foo) {
+    fun f1(foo: m::Foo) {
         let x = foo.x;
         //      ^ error! cannot access fields of `foo` here
     }
 
     fun f2() {
-        let foo_wrapper = Wrapper { foo: M::new_foo() };
+        let foo_wrapper = Wrapper { foo: m::new_foo() };
     }
 }
 }
@@ -322,7 +322,7 @@ circulation.
 
 ```move=
 address 0x2 {
-module M {
+module m {
     struct Foo { x: u64 }
 
     public fun copying_resource() {
@@ -352,7 +352,7 @@ resource:
 
 ```move=
 address 0x2 {
-module M {
+module m {
     struct Foo { x: u64 }
 
     public fun destroying_resource1_fixed() {
@@ -372,7 +372,7 @@ languages:
 
 ```move=
 address 0x2 {
-module M {
+module m {
     struct Foo has copy, drop { x: u64 }
 
     public fun run() {
@@ -394,7 +394,7 @@ module M {
 
 Only structs with the `key` ability can be saved directly in
 [persistent global storage](./global-storage-operators.md). All values stored within those `key`
-structs must have the `store` abilities. See the [ability](./abilities] and
+structs must have the `store` ability. See the [ability](./abilities) and
 [global storage](./global-storage-operators.md) chapters for more detail.
 
 ## Examples
@@ -408,7 +408,7 @@ Here are two short examples of how you might use structs to represent valuable d
 
 ```move=
 address 0x2 {
-module M {
+module m {
     // We do not want the Coin to be copied because that would be duplicating this "money",
     // so we do not give the struct the 'copy' ability.
     // Similarly, we do not want programmers to destroy coins, so we do not give the struct the
@@ -459,7 +459,7 @@ module M {
 
 ```move=
 address 0x2 {
-module Point {
+module point {
     struct Point has copy, drop, store {
         x: u64,
         y: u64,
@@ -499,7 +499,7 @@ module Point {
 
 ```move=
 address 0x2 {
-module Circle {
+module circle {
     use 0x2::Point::{Self, Point};
 
     struct Circle has copy, drop, store {

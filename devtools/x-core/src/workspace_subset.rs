@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{core_config::SubsetConfig, Result, SystemError};
@@ -34,13 +35,11 @@ impl<'g> WorkspaceSubsets<'g> {
         graph: &'g PackageGraph,
         project_root: &Utf8Path,
         config: &BTreeMap<String, SubsetConfig>,
-        hakari_package: &PackageMetadata<'g>,
     ) -> Result<Self> {
         let mut cargo_opts = CargoOptions::new();
         cargo_opts
             .set_resolver(CargoResolverVersion::V2)
-            .set_include_dev(false)
-            .add_omitted_packages(std::iter::once(hakari_package.id()));
+            .set_include_dev(false);
 
         let default_members = Self::read_default_members(project_root)?;
 

@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Binary format for transactions and modules.
@@ -33,11 +34,11 @@ use crate::{
     internals::ModuleIndex,
     IndexKind, SignatureTokenKind,
 };
-use mirai_annotations::*;
 use move_core_types::{
     account_address::AccountAddress,
     identifier::{IdentStr, Identifier},
     language_storage::ModuleId,
+    metadata::Metadata,
     vm_status::StatusCode,
 };
 #[cfg(any(test, feature = "fuzzing"))]
@@ -45,6 +46,7 @@ use proptest::{collection::vec, prelude::*, strategy::BoxedStrategy};
 #[cfg(any(test, feature = "fuzzing"))]
 use proptest_derive::Arbitrary;
 use ref_cast::RefCast;
+use serde::{Deserialize, Serialize};
 use std::ops::BitOr;
 use variant_count::VariantCount;
 
@@ -259,7 +261,7 @@ impl StructHandle {
 }
 
 /// A type parameter used in the declaration of a struct.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
 #[cfg_attr(any(test, feature = "fuzzing"), proptest(no_params))]
 pub struct StructTypeParameter {
@@ -399,7 +401,7 @@ pub struct FieldDefinition {
 
 /// `Visibility` restricts the accessibility of the associated entity.
 /// - For function visibility, it restricts who may call into the associated function.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
 #[cfg_attr(any(test, feature = "fuzzing"), proptest(no_params))]
 #[repr(u8)]
@@ -408,10 +410,15 @@ pub enum Visibility {
     Private = 0x0,
     /// Accessible by any module or script outside of its declaring module.
     Public = 0x1,
-    /// Accessible by any script or other `Script` functions from any module
-    Script = 0x2,
+    // DEPRECATED for separate entry modifier
+    // Accessible by any script or other `Script` functions from any module
+    // Script = 0x2,
     /// Accessible by this module as well as modules declared in the friend list.
     Friend = 0x3,
+}
+
+impl Visibility {
+    pub const DEPRECATED_SCRIPT: u8 = 0x2;
 }
 
 impl Default for Visibility {
@@ -427,7 +434,6 @@ impl std::convert::TryFrom<u8> for Visibility {
         match v {
             x if x == Visibility::Private as u8 => Ok(Visibility::Private),
             x if x == Visibility::Public as u8 => Ok(Visibility::Public),
-            x if x == Visibility::Script as u8 => Ok(Visibility::Script),
             x if x == Visibility::Friend as u8 => Ok(Visibility::Friend),
             _ => Err(()),
         }
@@ -444,6 +450,8 @@ pub struct FunctionDefinition {
     pub function: FunctionHandleIndex,
     /// The visibility of this function.
     pub visibility: Visibility,
+    /// Marker if the function is intended as an entry function. That is
+    pub is_entry: bool,
     /// List of locally defined types (declared in this module) with the `Key` ability
     /// that the procedure might access, either through: BorrowGlobal, MoveFrom, or transitively
     /// through another procedure
@@ -469,8 +477,14 @@ impl FunctionDefinition {
         self.code.is_none()
     }
 
+    // Deprecated public bit, deprecated in favor a the Visibility enum
+    pub const DEPRECATED_PUBLIC_BIT: u8 = 0b01;
+
     /// A native function implemented in Rust.
-    pub const NATIVE: u8 = 0x2;
+    pub const NATIVE: u8 = 0b10;
+
+    /// An entry function, intended to be used as an entry point to execution
+    pub const ENTRY: u8 = 0b100;
 }
 
 // Signature
@@ -594,7 +608,7 @@ impl Ability {
 }
 
 /// A set of `Ability`s
-#[derive(Clone, Eq, Copy, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Eq, Copy, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct AbilitySet(u8);
 
 impl AbilitySet {
@@ -1655,7 +1669,7 @@ impl Bytecode {
 
     /// Return the successor offsets of this bytecode instruction.
     pub fn get_successors(pc: CodeOffset, code: &[Bytecode]) -> Vec<CodeOffset> {
-        checked_precondition!(
+        assert!(
             // The program counter could be added to at most twice and must remain
             // within the bounds of the code.
             pc <= u16::max_value() - 2 && (pc as usize) < code.len(),
@@ -1715,11 +1729,12 @@ pub struct CompiledScript {
     /// Constant pool. The constant values used in the transaction.
     pub constant_pool: ConstantPool,
 
+    pub metadata: Vec<Metadata>,
+
+    pub code: CodeUnit,
     pub type_parameters: Vec<AbilitySet>,
 
     pub parameters: SignatureIndex,
-
-    pub code: CodeUnit,
 }
 
 impl CompiledScript {
@@ -1766,6 +1781,8 @@ pub struct CompiledModule {
     pub address_identifiers: AddressIdentifierPool,
     /// Constant pool. The constant values used in the module.
     pub constant_pool: ConstantPool,
+
+    pub metadata: Vec<Metadata>,
 
     /// Types defined in this module.
     pub struct_defs: Vec<StructDefinition>,
@@ -1817,6 +1834,7 @@ impl Arbitrary for CompiledScript {
                         identifiers,
                         address_identifiers,
                         constant_pool: vec![],
+                        metadata: vec![],
                         type_parameters,
                         parameters,
                         code,
@@ -1877,6 +1895,7 @@ impl Arbitrary for CompiledModule {
                         identifiers,
                         address_identifiers,
                         constant_pool: vec![],
+                        metadata: vec![],
                         struct_defs,
                         function_defs,
                     }
@@ -1889,7 +1908,7 @@ impl Arbitrary for CompiledModule {
 impl CompiledModule {
     /// Returns the count of a specific `IndexKind`
     pub fn kind_count(&self, kind: IndexKind) -> usize {
-        precondition!(!matches!(
+        debug_assert!(!matches!(
             kind,
             IndexKind::LocalPool
                 | IndexKind::CodeDefinition
@@ -1947,6 +1966,7 @@ pub fn empty_module() -> CompiledModule {
         identifiers: vec![self_module_name().to_owned()],
         address_identifiers: vec![AccountAddress::ZERO],
         constant_pool: vec![],
+        metadata: vec![],
         function_defs: vec![],
         struct_defs: vec![],
         struct_handles: vec![],
@@ -1983,6 +2003,7 @@ pub fn basic_test_module() -> CompiledModule {
     m.function_defs.push(FunctionDefinition {
         function: FunctionHandleIndex(0),
         visibility: Visibility::Private,
+        is_entry: false,
         acquires_global_resources: vec![],
         code: Some(CodeUnit {
             locals: SignatureIndex(0),
@@ -2027,6 +2048,7 @@ pub fn empty_script() -> CompiledScript {
         identifiers: vec![],
         address_identifiers: vec![],
         constant_pool: vec![],
+        metadata: vec![],
 
         type_parameters: vec![],
         parameters: SignatureIndex(0),

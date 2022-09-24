@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
@@ -9,14 +10,12 @@
 //! other blockchains can use it as well. The VM isn't there yet, but hopefully will be there
 //! soon.
 
-#[macro_use]
-extern crate mirai_annotations;
-
 pub mod data_cache;
 mod interpreter;
 mod loader;
 pub mod logging;
 pub mod move_vm;
+pub mod native_extensions;
 pub mod native_functions;
 mod runtime;
 pub mod session;
@@ -24,7 +23,7 @@ pub mod session;
 mod tracing;
 
 // Only include debugging functionality in debug builds
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "debugging"))]
 mod debug;
 
 #[cfg(test)]

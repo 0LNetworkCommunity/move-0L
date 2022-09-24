@@ -4,8 +4,6 @@
 
 [PRE_POST_REFERENCE]: https://en.wikipedia.org/wiki/Design_by_contract
 
-[FRAMEWORK]: ../../../../diem-move/diem-framework/core/doc/overview.md
-
 # Move Specification Language
 
 **version 1.4**
@@ -505,7 +503,7 @@ A spec block can contain let bindings which introduce names for expressions:
 ```move
 fun get_R(account: signer): R { ... }
 spec get_R {
-    let addr = Signer::spec_address_of(account);
+    let addr = signer::spec_address_of(account);
     aborts_if addr != ROOT;
     ensures result == global<R>(addr);
 }
@@ -1075,7 +1073,7 @@ in a vector:
 
 ```
 fun verify_reverse<Element>(v: &mut vector<Element>) {
-    let vlen = Vector::length(v);
+    let vlen = vector::length(v);
     if (vlen == 0) return ();
 
     let front_index = 0;
@@ -1090,7 +1088,7 @@ fun verify_reverse<Element>(v: &mut vector<Element>) {
         };
         (front_index < back_index)
     }) {
-        Vector::swap(v, front_index, back_index);
+        vector::swap(v, front_index, back_index);
         front_index = front_index + 1;
         back_index = back_index - 1;
     };
@@ -1353,5 +1351,5 @@ spec x_or_y_test {
     pragma opaque;
     ensures result.x == 2;
     ensures result.y == s.y;
-}/in
+}
 ```

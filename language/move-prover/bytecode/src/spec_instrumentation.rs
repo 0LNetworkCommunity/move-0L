@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 // Transformation which injects specifications (Move function spec blocks) into the bytecode.
@@ -8,7 +9,7 @@ use itertools::Itertools;
 use move_model::{
     ast,
     ast::{ExpData, TempIndex, Value},
-    model::{FunId, FunctionEnv, GlobalEnv, Loc, ModuleId, QualifiedId, StructId},
+    model::{FunId, FunctionEnv, GlobalEnv, Loc, ModuleId, QualifiedId, QualifiedInstId, StructId},
     pragmas::{ABORTS_IF_IS_PARTIAL_PRAGMA, EMITS_IS_PARTIAL_PRAGMA, EMITS_IS_STRICT_PRAGMA},
     ty::{Type, TypeDisplayContext, BOOL_TYPE, NUM_TYPE},
 };
@@ -187,6 +188,7 @@ struct Instrumenter<'a> {
     abort_local: TempIndex,
     abort_label: Label,
     can_abort: bool,
+    mem_info: &'a BTreeSet<QualifiedInstId<StructId>>,
 }
 
 impl<'a> Instrumenter<'a> {
@@ -260,6 +262,16 @@ impl<'a> Instrumenter<'a> {
             })
             .collect();
 
+        let mut mem_info = BTreeSet::new();
+
+        if auto_trace {
+            // Retrieve the memory used by the function
+            mem_info =
+                usage_analysis::get_memory_usage(&FunctionTarget::new(fun_env, &builder.data))
+                    .accessed
+                    .get_all_inst(&builder.data.type_args);
+        }
+
         // Create and run the instrumenter.
         let mut instrumenter = Instrumenter {
             options,
@@ -270,6 +282,7 @@ impl<'a> Instrumenter<'a> {
             abort_local,
             abort_label,
             can_abort: false,
+            mem_info: &mem_info,
         };
         instrumenter.instrument(&spec, &inlined_props);
 
@@ -609,9 +622,9 @@ impl<'a> Instrumenter<'a> {
                 self.builder.emit_with(|id| {
                     Call(
                         id,
-                        vec![],
-                        Operation::Havoc(HavocKind::MutationValue),
                         vec![*src],
+                        Operation::Havoc(HavocKind::MutationValue),
+                        vec![],
                         None,
                     )
                 });
@@ -647,8 +660,13 @@ impl<'a> Instrumenter<'a> {
                 if let Some(c) = &cond {
                     self.emit_traces(&callee_spec, c);
                 }
+
                 let temp_msg = self.builder.emit_let(msg).0;
-                let temp_handle = self.builder.emit_let(handle).0;
+                // the event handle needs to be let-bound without the reference as we do not want
+                // to create mutable references via Assume(Identical) as it complicates both
+                // the live var analysis and the borrow analysis.
+                let temp_handle = self.builder.emit_let_skip_reference(handle).0;
+
                 let mut temp_list = vec![temp_msg, temp_handle];
                 if let Some(cond) = cond {
                     temp_list.push(self.builder.emit_let(cond).0);
@@ -801,6 +819,19 @@ impl<'a> Instrumenter<'a> {
                     vec![],
                     Operation::TraceExp(*kind, *node_id),
                     vec![temp],
+                    None,
+                )
+            });
+        }
+
+        // Collects related global memory.
+        for memory in self.mem_info {
+            self.builder.emit_with(|id| {
+                Call(
+                    id,
+                    vec![],
+                    Operation::TraceGlobalMem(memory.clone()),
+                    vec![],
                     None,
                 )
             });

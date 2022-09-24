@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #[allow(unused_imports)]
@@ -25,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, VecDeque},
+    fmt::Write as FmtWrite,
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -706,7 +708,7 @@ impl<'env> Docgen<'env> {
             .join(format!(
                 "{}_{}_call_graph.svg",
                 fun_env.get_name_string().to_string().replace("::", "_"),
-                (if is_forward { "forward" } else { "backward" }).to_string()
+                (if is_forward { "forward" } else { "backward" })
             ));
 
         self.gen_svg_file(&out_file_path, &dot_src_lines.join("\n"));
@@ -754,7 +756,7 @@ impl<'env> Docgen<'env> {
             .join(format!(
                 "{}_{}_dep.svg",
                 module_name,
-                (if is_forward { "forward" } else { "backward" }).to_string()
+                (if is_forward { "forward" } else { "backward" })
             ));
 
         self.gen_svg_file(&out_file_path, &dot_src_lines.join("\n"));
@@ -1466,7 +1468,13 @@ impl<'env> Docgen<'env> {
                                             "Missing backtick found in {} while generating documentation for the following text: \"{}\"",
                                             self.current_module.as_ref().unwrap().get_name().display_full(self.env.symbol_pool()), text,
                                         );
-                    decorated_text += &format!("<code>{}</code>", self.decorate_code(&code));
+
+                    write!(
+                        &mut decorated_text,
+                        "<code>{}</code>",
+                        self.decorate_code(&code)
+                    )
+                    .unwrap()
                 }
             } else {
                 decorated_text.push(chr);
@@ -1532,7 +1540,7 @@ impl<'env> Docgen<'env> {
                 }
             };
             if replacement.is_empty() {
-                r += &code[at..at + cap.get(0).unwrap().end()].replace("<", "&lt;");
+                r += &code[at..at + cap.get(0).unwrap().end()].replace('<', "&lt;");
             } else {
                 r += &code[at..at + cap.get(0).unwrap().start()];
                 r += &replacement;
@@ -1540,7 +1548,7 @@ impl<'env> Docgen<'env> {
                     // Append the call or generic open we may have also matched to distinguish
                     // a simple name from a function call or generic instantiation. Need to
                     // replace the `<` as well.
-                    r += &m.as_str().replace("<", "&lt;");
+                    r += &m.as_str().replace('<', "&lt;");
                 }
             }
             at += cap.get(0).unwrap().end();

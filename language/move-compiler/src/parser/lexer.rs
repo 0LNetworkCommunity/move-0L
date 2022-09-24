@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -223,8 +224,8 @@ impl<'input> Lexer<'input> {
         // Loop until we find text that isn't whitespace, and that isn't part of
         // a multi-line or single-line comment.
         loop {
-            // Trim only the whitespace characters we recognize: newline, tab, and space.
-            text = text.trim_start_matches(|c: char| matches!(c, '\n' | '\t' | ' '));
+            // Trim the start whitespace characters.
+            text = trim_start_whitespace(text);
 
             if text.starts_with("/*") {
                 // Strip multi-line comments like '/* ... */' or '/** ... */'.
@@ -294,10 +295,11 @@ impl<'input> Lexer<'input> {
                 // If this was a documentation comment, record it in our map.
                 if is_doc {
                     let end = get_offset(text);
-                    self.doc_comments.insert(
-                        (start as u32, end as u32),
-                        self.text[(start + 3)..end].to_string(),
-                    );
+                    let mut comment = &self.text[(start + 3)..end];
+                    comment = comment.trim_end_matches(|c: char| c == '\r');
+
+                    self.doc_comments
+                        .insert((start as u32, end as u32), comment.to_string());
                 }
 
                 // Continue the loop on the following line, which may contain leading
@@ -552,14 +554,14 @@ fn find_token(
 fn get_name_len(text: &str) -> usize {
     text.chars()
         .position(|c| !matches!(c, 'a'..='z' | 'A'..='Z' | '_' | '0'..='9'))
-        .unwrap_or_else(|| text.len())
+        .unwrap_or(text.len())
 }
 
 fn get_decimal_number(text: &str) -> (Tok, usize) {
     let num_text_len = text
         .chars()
         .position(|c| !matches!(c, '0'..='9'))
-        .unwrap_or_else(|| text.len());
+        .unwrap_or(text.len());
     get_number_maybe_with_suffix(text, num_text_len)
 }
 
@@ -567,7 +569,7 @@ fn get_decimal_number(text: &str) -> (Tok, usize) {
 fn get_hex_number(text: &str) -> (Tok, usize) {
     let num_text_len = text
         .find(|c| !matches!(c, 'a'..='f' | 'A'..='F' | '0'..='9'))
-        .unwrap_or_else(|| text.len());
+        .unwrap_or(text.len());
     get_number_maybe_with_suffix(text, num_text_len)
 }
 
@@ -634,5 +636,67 @@ fn get_name_token(name: &str) -> Tok {
         "use" => Tok::Use,
         "while" => Tok::While,
         _ => Tok::Identifier,
+    }
+}
+
+// Trim the start whitespace characters, include: space, tab, lf(\n) and crlf(\r\n).
+fn trim_start_whitespace(text: &str) -> &str {
+    let mut pos = 0;
+    let mut iter = text.chars();
+
+    while let Some(chr) = iter.next() {
+        match chr {
+            ' ' | '\t' | '\n' => pos += 1,
+            '\r' if matches!(iter.next(), Some('\n')) => pos += 2,
+            _ => break,
+        };
+    }
+
+    &text[pos..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::trim_start_whitespace;
+
+    #[test]
+    fn test_trim_start_whitespace() {
+        assert_eq!(trim_start_whitespace("\r"), "\r");
+        assert_eq!(trim_start_whitespace("\rxxx"), "\rxxx");
+        assert_eq!(trim_start_whitespace("\t\rxxx"), "\rxxx");
+        assert_eq!(trim_start_whitespace("\r\n\rxxx"), "\rxxx");
+
+        assert_eq!(trim_start_whitespace("\n"), "");
+        assert_eq!(trim_start_whitespace("\r\n"), "");
+        assert_eq!(trim_start_whitespace("\t"), "");
+        assert_eq!(trim_start_whitespace(" "), "");
+
+        assert_eq!(trim_start_whitespace("\nxxx"), "xxx");
+        assert_eq!(trim_start_whitespace("\r\nxxx"), "xxx");
+        assert_eq!(trim_start_whitespace("\txxx"), "xxx");
+        assert_eq!(trim_start_whitespace(" xxx"), "xxx");
+
+        assert_eq!(trim_start_whitespace(" \r\n"), "");
+        assert_eq!(trim_start_whitespace("\t\r\n"), "");
+        assert_eq!(trim_start_whitespace("\n\r\n"), "");
+        assert_eq!(trim_start_whitespace("\r\n "), "");
+        assert_eq!(trim_start_whitespace("\r\n\t"), "");
+        assert_eq!(trim_start_whitespace("\r\n\n"), "");
+
+        assert_eq!(trim_start_whitespace(" \r\nxxx"), "xxx");
+        assert_eq!(trim_start_whitespace("\t\r\nxxx"), "xxx");
+        assert_eq!(trim_start_whitespace("\n\r\nxxx"), "xxx");
+        assert_eq!(trim_start_whitespace("\r\n xxx"), "xxx");
+        assert_eq!(trim_start_whitespace("\r\n\txxx"), "xxx");
+        assert_eq!(trim_start_whitespace("\r\n\nxxx"), "xxx");
+
+        assert_eq!(trim_start_whitespace(" \r\n\r\n"), "");
+        assert_eq!(trim_start_whitespace("\r\n \t\n"), "");
+
+        assert_eq!(trim_start_whitespace(" \r\n\r\nxxx"), "xxx");
+        assert_eq!(trim_start_whitespace("\r\n \t\nxxx"), "xxx");
+
+        assert_eq!(trim_start_whitespace(" \r\n\r\nxxx\n"), "xxx\n");
+        assert_eq!(trim_start_whitespace("\r\n \t\nxxx\r\n"), "xxx\r\n");
     }
 }

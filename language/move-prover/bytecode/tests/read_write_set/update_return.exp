@@ -8,20 +8,18 @@ public fun UpdateReturn::abort_or_write($t0|s: &mut UpdateReturn::S, $t1|b: bool
      var $t6: &mut UpdateReturn::S
      var $t7: u64
      var $t8: u64
-  0: $t3 := copy($t1)
-  1: if ($t3) goto 4 else goto 2
-  2: label L1
-  3: goto 9
-  4: label L0
-  5: $t4 := move($t0)
-  6: destroy($t4)
-  7: $t5 := 77
-  8: abort($t5)
-  9: label L2
- 10: $t6 := move($t0)
- 11: $t7 := copy($t2)
- 12: $t8 := UpdateReturn::write_f($t6, $t7)
- 13: return $t8
+  0: $t3 := move($t1)
+  1: if ($t3) goto 2 else goto 7
+  2: label L0
+  3: $t4 := move($t0)
+  4: destroy($t4)
+  5: $t5 := 77
+  6: abort($t5)
+  7: label L2
+  8: $t6 := move($t0)
+  9: $t7 := move($t2)
+ 10: $t8 := UpdateReturn::write_f($t6, $t7)
+ 11: return $t8
 }
 
 
@@ -35,7 +33,7 @@ public fun UpdateReturn::write_f($t0|s: &mut UpdateReturn::S, $t1|x: u64): u64 {
   1: $t3 := move($t0)
   2: $t4 := borrow_field<UpdateReturn::S>.f($t3)
   3: write_ref($t4, $t2)
-  4: $t5 := copy($t1)
+  4: $t5 := move($t1)
   5: return $t5
 }
 
@@ -58,20 +56,18 @@ public fun UpdateReturn::abort_or_write($t0|s: &mut UpdateReturn::S, $t1|b: bool
      # Locals:
      # Ret(0): Formal(2)
      #
-  0: $t3 := copy($t1)
-  1: if ($t3) goto 4 else goto 2
-  2: label L1
-  3: goto 9
-  4: label L0
-  5: $t4 := move($t0)
-  6: destroy($t4)
-  7: $t5 := 77
-  8: abort($t5)
-  9: label L2
- 10: $t6 := move($t0)
- 11: $t7 := copy($t2)
- 12: $t8 := UpdateReturn::write_f($t6, $t7)
- 13: return $t8
+  0: $t3 := move($t1)
+  1: if ($t3) goto 2 else goto 7
+  2: label L0
+  3: $t4 := move($t0)
+  4: destroy($t4)
+  5: $t5 := 77
+  6: abort($t5)
+  7: label L2
+  8: $t6 := move($t0)
+  9: $t7 := move($t2)
+ 10: $t8 := UpdateReturn::write_f($t6, $t7)
+ 11: return $t8
 }
 
 
@@ -93,6 +89,6 @@ public fun UpdateReturn::write_f($t0|s: &mut UpdateReturn::S, $t1|x: u64): u64 {
   1: $t3 := move($t0)
   2: $t4 := borrow_field<UpdateReturn::S>.f($t3)
   3: write_ref($t4, $t2)
-  4: $t5 := copy($t1)
+  4: $t5 := move($t1)
   5: return $t5
 }

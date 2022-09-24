@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! Translates and validates specification language fragments as they are output from the Move
@@ -8,16 +9,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use codespan_reporting::diagnostic::Severity;
 #[allow(unused_imports)]
 use log::{debug, info, warn};
 use num::BigUint;
 
 use move_compiler::{expansion::ast as EA, parser::ast as PA, shared::NumericalAddress};
-use move_symbol_pool::Symbol as MoveStringSymbol;
 
 use crate::{
     ast::{Attribute, ModuleName, Operation, QualifiedSymbol, Spec, Value},
     builder::spec_builtins,
+    intrinsics::IntrinsicDecl,
     model::{
         FunId, FunctionVisibility, GlobalEnv, Loc, ModuleId, QualifiedId, SpecFunId, SpecVarId,
         StructId,
@@ -26,7 +28,6 @@ use crate::{
     symbol::Symbol,
     ty::Type,
 };
-use codespan_reporting::diagnostic::Severity;
 
 /// A builder is used to enter a sequence of modules in acyclic dependency order into the model. The
 /// builder maintains the incremental state of this process, such that the various tables
@@ -36,8 +37,6 @@ use codespan_reporting::diagnostic::Severity;
 pub(crate) struct ModelBuilder<'env> {
     /// The global environment we are building.
     pub env: &'env mut GlobalEnv,
-    /// Set of known named addresses provided by the compiler
-    pub named_address_mapping: BTreeMap<MoveStringSymbol, NumericalAddress>,
     /// A symbol table for specification functions. Because of overloading, and entry can
     /// contain multiple functions.
     pub spec_fun_table: BTreeMap<QualifiedSymbol, Vec<SpecFunEntry>>,
@@ -48,7 +47,7 @@ pub(crate) struct ModelBuilder<'env> {
     /// A symbol table storing unused schemas, used later to generate warnings. All schemas
     /// are initially in the table and are removed when they are used in expressions.
     pub unused_schema_set: BTreeSet<QualifiedSymbol>,
-    // A symbol table for structs.
+    /// A symbol table for structs.
     pub struct_table: BTreeMap<QualifiedSymbol, StructEntry>,
     /// A reverse mapping from ModuleId/StructId pairs to QualifiedSymbol. This
     /// is used for visualization of types in error messages.
@@ -59,11 +58,14 @@ pub(crate) struct ModelBuilder<'env> {
     pub const_table: BTreeMap<QualifiedSymbol, ConstEntry>,
     /// A call graph mapping callers to callees that are Move functions.
     pub move_fun_call_graph: BTreeMap<QualifiedId<SpecFunId>, BTreeSet<QualifiedId<SpecFunId>>>,
+    /// A list of intrinsic declarations
+    pub intrinsics: Vec<IntrinsicDecl>,
 }
 
 /// A declaration of a specification function or operator in the builders state.
 #[derive(Debug, Clone)]
 pub(crate) struct SpecFunEntry {
+    #[allow(dead_code)]
     pub loc: Loc,
     pub oper: Operation,
     pub type_params: Vec<Type>,
@@ -76,6 +78,7 @@ pub(crate) struct SpecFunEntry {
 pub(crate) struct SpecVarEntry {
     pub loc: Loc,
     pub module_id: ModuleId,
+    #[allow(dead_code)]
     pub var_id: SpecVarId,
     pub type_params: Vec<(Symbol, Type)>,
     pub type_: Type,
@@ -85,6 +88,7 @@ pub(crate) struct SpecVarEntry {
 #[derive(Debug)]
 pub(crate) struct SpecSchemaEntry {
     pub loc: Loc,
+    #[allow(dead_code)]
     pub name: QualifiedSymbol,
     pub module_id: ModuleId,
     pub type_params: Vec<(Symbol, Type)>,
@@ -104,6 +108,7 @@ pub(crate) struct StructEntry {
     pub loc: Loc,
     pub module_id: ModuleId,
     pub struct_id: StructId,
+    #[allow(dead_code)]
     pub is_resource: bool,
     pub type_params: Vec<(Symbol, Type)>,
     pub fields: Option<BTreeMap<Symbol, (usize, Type)>>,
@@ -117,6 +122,7 @@ pub(crate) struct FunEntry {
     pub module_id: ModuleId,
     pub fun_id: FunId,
     pub visibility: FunctionVisibility,
+    pub is_entry: bool,
     pub type_params: Vec<(Symbol, Type)>,
     pub params: Vec<(Symbol, Type)>,
     pub result_type: Type,
@@ -133,13 +139,9 @@ pub(crate) struct ConstEntry {
 
 impl<'env> ModelBuilder<'env> {
     /// Creates a builders.
-    pub fn new(
-        env: &'env mut GlobalEnv,
-        named_address_mapping: BTreeMap<MoveStringSymbol, NumericalAddress>,
-    ) -> Self {
+    pub fn new(env: &'env mut GlobalEnv) -> Self {
         let mut translator = ModelBuilder {
             env,
-            named_address_mapping,
             spec_fun_table: BTreeMap::new(),
             spec_var_table: BTreeMap::new(),
             spec_schema_table: BTreeMap::new(),
@@ -149,6 +151,7 @@ impl<'env> ModelBuilder<'env> {
             fun_table: BTreeMap::new(),
             const_table: BTreeMap::new(),
             move_fun_call_graph: BTreeMap::new(),
+            intrinsics: Default::default(),
         };
         spec_builtins::declare_spec_builtins(&mut translator);
         translator
@@ -271,6 +274,7 @@ impl<'env> ModelBuilder<'env> {
         module_id: ModuleId,
         fun_id: FunId,
         visibility: FunctionVisibility,
+        is_entry: bool,
         type_params: Vec<(Symbol, Type)>,
         params: Vec<(Symbol, Type)>,
         result_type: Type,
@@ -281,6 +285,7 @@ impl<'env> ModelBuilder<'env> {
             module_id,
             fun_id,
             visibility,
+            is_entry,
             type_params,
             params,
             result_type,
@@ -298,15 +303,11 @@ impl<'env> ModelBuilder<'env> {
 
     pub fn resolve_address(&self, loc: &Loc, addr: &EA::Address) -> NumericalAddress {
         match addr {
-            EA::Address::Anonymous(bytes) => bytes.value,
-            EA::Address::Named(n) => self
-                .named_address_mapping
-                .get(&n.value)
-                .cloned()
-                .unwrap_or_else(|| {
-                    self.error(loc, &format!("Undeclared address `{}`", n));
-                    NumericalAddress::DEFAULT_ERROR_ADDRESS
-                }),
+            EA::Address::Numerical(_, bytes) => bytes.value,
+            EA::Address::NamedUnassigned(name) => {
+                self.error(loc, &format!("Undeclared address `{}`", name));
+                NumericalAddress::DEFAULT_ERROR_ADDRESS
+            }
         }
     }
 
@@ -412,6 +413,14 @@ impl<'env> ModelBuilder<'env> {
                     self.propagate_move_fun_usage(*n);
                 }
             });
+        }
+    }
+
+    /// Pass model-level information to the global env
+    pub fn populate_env(&mut self) {
+        // register all intrinsic declarations
+        for decl in &self.intrinsics {
+            self.env.intrinsics.add_decl(decl);
         }
     }
 }

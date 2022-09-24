@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::abstract_state::Mutability;
@@ -22,7 +23,7 @@ type Edge = (PartitionID, PartitionID, Path, EdgeType);
 
 /// The `EdgeType` is either weak or strong. A weak edge represents imprecise information
 /// on the path along which the borrow takes place. A strong edge is precise.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdgeType {
     Weak,
     Strong,
@@ -30,7 +31,7 @@ pub enum EdgeType {
 
 /// The `BorrowGraph` stores information sufficient to determine whether the instruction
 /// of a bytecode instruction that interacts with references is memory safe.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BorrowGraph {
     /// All of the partitions that make up the graph
     partitions: Vec<PartitionID>,
@@ -66,7 +67,7 @@ impl BorrowGraph {
             }
             self.partition_map.insert(self.partition_counter, vec![n]);
             // Implication of `checked_add`
-            assume!(self.partitions.len() < usize::max_value());
+            debug_assert!(self.partitions.len() < usize::max_value());
             self.partitions.push(self.partition_counter);
             Ok(())
         } else {

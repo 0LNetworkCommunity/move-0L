@@ -1,10 +1,11 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     parser::ast::{
-        Ability, Ability_, BinOp, ConstantName, Field, FunctionName, ModuleName, QuantKind,
-        SpecApplyPattern, StructName, UnaryOp, Var, Visibility,
+        self as P, Ability, Ability_, BinOp, ConstantName, Field, FunctionName, ModuleName,
+        QuantKind, SpecApplyPattern, StructName, UnaryOp, Var, ENTRY_MODIFIER,
     },
     shared::{
         ast_debug::*, known_attributes::KnownAttribute, unique_map::UniqueMap,
@@ -74,6 +75,8 @@ pub type Attributes = UniqueMap<AttributeName, Attribute>;
 
 #[derive(Debug, Clone)]
 pub struct Script {
+    // package name metadata from compiler arguments, not used for any language rules
+    pub package_name: Option<Symbol>,
     pub attributes: Attributes,
     pub loc: Loc,
     pub immediate_neighbors: UniqueMap<ModuleIdent, Neighbor>,
@@ -88,10 +91,10 @@ pub struct Script {
 // Modules
 //**************************************************************************************************
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy)]
 pub enum Address {
-    Anonymous(Spanned<NumericalAddress>),
-    Named(Name),
+    Numerical(Option<Name>, Spanned<NumericalAddress>),
+    NamedUnassigned(Name),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleIdent_ {
@@ -102,6 +105,8 @@ pub type ModuleIdent = Spanned<ModuleIdent_>;
 
 #[derive(Debug, Clone)]
 pub struct ModuleDefinition {
+    // package name metadata from compiler arguments, not used for any language rules
+    pub package_name: Option<Symbol>,
     pub attributes: Attributes,
     pub loc: Loc,
     pub is_source_module: bool,
@@ -139,7 +144,7 @@ pub enum Neighbor {
 
 pub type Fields<T> = UniqueMap<Field, (usize, T)>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructTypeParameter {
     pub is_phantom: bool,
     pub name: Name,
@@ -165,6 +170,13 @@ pub enum StructFields {
 // Functions
 //**************************************************************************************************
 
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum Visibility {
+    Public(Loc),
+    Friend(Loc),
+    Internal,
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub struct FunctionSignature {
     pub type_parameters: Vec<(Name, AbilitySet)>,
@@ -187,6 +199,7 @@ pub struct Function {
     pub attributes: Attributes,
     pub loc: Loc,
     pub visibility: Visibility,
+    pub entry: Option<Loc>,
     pub signature: FunctionSignature,
     pub acquires: Vec<ModuleAccess>,
     pub body: FunctionBody,
@@ -273,7 +286,7 @@ pub enum SpecBlockMember_ {
 }
 pub type SpecBlockMember = Spanned<SpecBlockMember_>;
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum SpecConditionKind_ {
     Assert,
     Assume,
@@ -291,14 +304,14 @@ pub enum SpecConditionKind_ {
 }
 pub type SpecConditionKind = Spanned<SpecConditionKind_>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PragmaProperty_ {
     pub name: Name,
     pub value: Option<PragmaValue>,
 }
 pub type PragmaProperty = Spanned<PragmaProperty_>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PragmaValue {
     Literal(Value),
     Ident(ModuleAccess),
@@ -491,27 +504,60 @@ impl fmt::Debug for Address {
     }
 }
 
+impl PartialEq for Address {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Numerical(_, l), Self::Numerical(_, r)) => l == r,
+            (Self::NamedUnassigned(l), Self::NamedUnassigned(r)) => l == r,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Address {}
+
+impl PartialOrd for Address {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Address {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        match (self, other) {
+            (Self::Numerical(_, _), Self::NamedUnassigned(_)) => Ordering::Less,
+            (Self::NamedUnassigned(_), Self::Numerical(_, _)) => Ordering::Greater,
+
+            (Self::Numerical(_, l), Self::Numerical(_, r)) => l.cmp(r),
+            (Self::NamedUnassigned(l), Self::NamedUnassigned(r)) => l.cmp(r),
+        }
+    }
+}
+
+impl Hash for Address {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Numerical(_, sp!(_, bytes)) => bytes.hash(state),
+            Self::NamedUnassigned(name) => name.hash(state),
+        }
+    }
+}
+
 //**************************************************************************************************
 // impls
 //**************************************************************************************************
 
 impl Address {
     pub const fn anonymous(loc: Loc, address: NumericalAddress) -> Self {
-        Self::Anonymous(sp(loc, address))
+        Self::Numerical(None, sp(loc, address))
     }
 
-    pub fn into_addr_bytes(
-        self,
-        addresses: &BTreeMap<Symbol, NumericalAddress>,
-    ) -> NumericalAddress {
+    pub fn into_addr_bytes(self) -> NumericalAddress {
         match self {
-            Self::Anonymous(sp!(_, bytes)) => bytes,
-            Self::Named(n) => *addresses.get(&n.value).unwrap_or_else(|| {
-                panic!(
-                    "ICE no value found for address '{}' after expansion",
-                    n.value
-                )
-            }),
+            Self::Numerical(_, sp!(_, bytes)) => bytes,
+            Self::NamedUnassigned(_) => NumericalAddress::DEFAULT_ERROR_ADDRESS,
         }
     }
 }
@@ -625,6 +671,19 @@ impl AbilitySet {
     }
 }
 
+impl Visibility {
+    pub const PUBLIC: &'static str = P::Visibility::PUBLIC;
+    pub const FRIEND: &'static str = P::Visibility::FRIEND;
+    pub const INTERNAL: &'static str = P::Visibility::INTERNAL;
+
+    pub fn loc(&self) -> Option<Loc> {
+        match self {
+            Visibility::Public(loc) | Visibility::Friend(loc) => Some(*loc),
+            Visibility::Internal => None,
+        }
+    }
+}
+
 //**************************************************************************************************
 // Iter
 //**************************************************************************************************
@@ -666,7 +725,7 @@ impl Iterator for AbilitySetIntoIter {
     }
 }
 
-impl<'a> IntoIterator for AbilitySet {
+impl IntoIterator for AbilitySet {
     type Item = Ability;
     type IntoIter = AbilitySetIntoIter;
 
@@ -682,8 +741,9 @@ impl<'a> IntoIterator for AbilitySet {
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Anonymous(sp!(_, bytes)) => write!(f, "{}", bytes),
-            Self::Named(n) => write!(f, "{}", n),
+            Self::Numerical(None, sp!(_, bytes)) => write!(f, "{}", bytes),
+            Self::Numerical(Some(name), sp!(_, bytes)) => write!(f, "({}={})", name, bytes),
+            Self::NamedUnassigned(name) => write!(f, "{}", name),
         }
     }
 }
@@ -719,6 +779,20 @@ impl fmt::Display for ModuleAccess_ {
             Name(n) => write!(f, "{}", n),
             ModuleAccess(m, n) => write!(f, "{}::{}", m, n),
         }
+    }
+}
+
+impl fmt::Display for Visibility {
+    fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match &self {
+                Visibility::Public(_) => Visibility::PUBLIC,
+                Visibility::Friend(_) => Visibility::FRIEND,
+                Visibility::Internal => Visibility::INTERNAL,
+            }
+        )
     }
 }
 
@@ -820,6 +894,7 @@ impl AstDebug for Attributes {
 impl AstDebug for Script {
     fn ast_debug(&self, w: &mut AstWriter) {
         let Script {
+            package_name,
             attributes,
             loc: _loc,
             immediate_neighbors,
@@ -829,6 +904,9 @@ impl AstDebug for Script {
             function,
             specs,
         } = self;
+        if let Some(n) = package_name {
+            w.writeln(&format!("{}", n))
+        }
         attributes.ast_debug(w);
         for (mident, neighbor) in immediate_neighbors.key_cloned_iter() {
             w.write(&format!("{} {};", neighbor, mident));
@@ -853,6 +931,7 @@ impl AstDebug for Script {
 impl AstDebug for ModuleDefinition {
     fn ast_debug(&self, w: &mut AstWriter) {
         let ModuleDefinition {
+            package_name,
             attributes,
             loc: _loc,
             is_source_module,
@@ -865,6 +944,9 @@ impl AstDebug for ModuleDefinition {
             constants,
             specs,
         } = self;
+        if let Some(n) = package_name {
+            w.writeln(&format!("{}", n))
+        }
         attributes.ast_debug(w);
         w.writeln(if *is_source_module {
             "source module"
@@ -1142,6 +1224,7 @@ impl AstDebug for (FunctionName, &Function) {
                 attributes,
                 loc: _loc,
                 visibility,
+                entry,
                 signature,
                 acquires,
                 body,
@@ -1150,6 +1233,9 @@ impl AstDebug for (FunctionName, &Function) {
         ) = self;
         attributes.ast_debug(w);
         visibility.ast_debug(w);
+        if entry.is_some() {
+            w.write(&format!("{} ", ENTRY_MODIFIER));
+        }
         if let FunctionBody_::Native = &body.value {
             w.write("native ");
         }
@@ -1164,6 +1250,12 @@ impl AstDebug for (FunctionName, &Function) {
             FunctionBody_::Defined(body) => w.block(|w| body.ast_debug(w)),
             FunctionBody_::Native => w.writeln(";"),
         }
+    }
+}
+
+impl AstDebug for Visibility {
+    fn ast_debug(&self, w: &mut AstWriter) {
+        w.write(&format!("{} ", self))
     }
 }
 

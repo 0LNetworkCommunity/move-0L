@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 #![forbid(unsafe_code)]
@@ -11,9 +12,6 @@ pub mod control_flow_graph;
 pub mod error;
 pub mod summaries;
 pub mod transitions;
-
-#[macro_use]
-extern crate mirai_annotations;
 
 use crate::config::{Args, EXECUTE_UNVERIFIED_MODULE, RUN_ON_VM};
 use bytecode_generator::BytecodeGenerator;
@@ -30,7 +28,7 @@ use move_bytecode_verifier::verify_module;
 use move_compiler::{compiled_unit::AnnotatedCompiledUnit, Compiler};
 use move_core_types::{
     account_address::AccountAddress,
-    effects::ChangeSet,
+    effects::{ChangeSet, Op},
     language_storage::TypeTag,
     resolver::MoveResolver,
     value::MoveValue,
@@ -38,7 +36,7 @@ use move_core_types::{
 };
 use move_vm_runtime::move_vm::MoveVM;
 use move_vm_test_utils::{DeltaStorage, InMemoryStorage};
-use move_vm_types::gas_schedule::GasStatus;
+use move_vm_types::gas::UnmeteredGasMeter;
 use once_cell::sync::Lazy;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::{fs, io::Write, panic, thread};
@@ -57,10 +55,13 @@ fn run_verifier(module: CompiledModule) -> Result<CompiledModule, String> {
 
 static STORAGE_WITH_MOVE_STDLIB: Lazy<InMemoryStorage> = Lazy::new(|| {
     let mut storage = InMemoryStorage::new();
-    let (_, compiled_units) = Compiler::new(&move_stdlib::move_stdlib_files(), &[])
-        .set_named_address_values(move_stdlib::move_stdlib_named_addresses())
-        .build_and_report()
-        .unwrap();
+    let (_, compiled_units) = Compiler::from_files(
+        move_stdlib::move_stdlib_files(),
+        vec![],
+        move_stdlib::move_stdlib_named_addresses(),
+    )
+    .build_and_report()
+    .unwrap();
     let compiled_modules = compiled_units.into_iter().map(|unit| match unit {
         AnnotatedCompiledUnit::Module(annot_module) => annot_module.named_module.module,
         AnnotatedCompiledUnit::Script(_) => panic!("Unexpected Script in stdlib"),
@@ -125,18 +126,26 @@ fn execute_function_in_module(
     {
         let vm = MoveVM::new(move_stdlib::natives::all_natives(
             AccountAddress::from_hex_literal("0x1").unwrap(),
+            move_stdlib::natives::GasParameters::zeros(),
         ))
         .unwrap();
 
         let mut changeset = ChangeSet::new();
         let mut blob = vec![];
         module.serialize(&mut blob).unwrap();
-        changeset.publish_or_overwrite_module(module_id.clone(), blob);
+        changeset
+            .add_module_op(module_id.clone(), Op::New(blob))
+            .unwrap();
         let delta_storage = DeltaStorage::new(storage, &changeset);
         let mut sess = vm.new_session(&delta_storage);
 
-        let mut gas_status = GasStatus::new_unmetered();
-        sess.execute_function(&module_id, entry_name, ty_args, args, &mut gas_status)?;
+        sess.execute_function_bypass_visibility(
+            &module_id,
+            entry_name,
+            ty_args,
+            args,
+            &mut UnmeteredGasMeter,
+        )?;
 
         Ok(())
     }
@@ -182,7 +191,7 @@ fn seed(seed: Option<String>) -> [u8; 32] {
     array
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     VerificationFailure,
     ExecutionFailure,
@@ -388,7 +397,7 @@ pub(crate) fn substitute(token: &SignatureToken, tys: &[SignatureToken]) -> Sign
         TypeParameter(idx) => {
             // Assume that the caller has previously parsed and verified the structure of the
             // file and that this guarantees that type parameter indices are always in bounds.
-            assume!((*idx as usize) < tys.len());
+            debug_assert!((*idx as usize) < tys.len());
             tys[*idx as usize].clone()
         }
     }

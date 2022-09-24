@@ -1,24 +1,27 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 // Final phase of cleanup and optimization.
 
+use std::collections::BTreeSet;
+
+use move_binary_format::file_format::CodeOffset;
+use move_model::{
+    model::FunctionEnv,
+    pragmas::INTRINSIC_FUN_MAP_BORROW_MUT,
+    well_known::{EVENT_EMIT_EVENT, VECTOR_BORROW_MUT},
+};
+
 use crate::{
     dataflow_analysis::{DataflowAnalysis, TransferFunctions},
+    dataflow_domains::{AbstractDomain, JoinResult},
     function_target::{FunctionData, FunctionTarget},
     function_target_pipeline::{FunctionTargetProcessor, FunctionTargetsHolder},
     options::ProverOptions,
     stackless_bytecode::{BorrowNode, Bytecode, Operation},
     stackless_control_flow_graph::StacklessControlFlowGraph,
 };
-use move_binary_format::file_format::CodeOffset;
-use move_model::{
-    model::FunctionEnv,
-    native::{EVENT_EMIT_EVENT, VECTOR_BORROW_MUT},
-};
-
-use crate::dataflow_domains::{AbstractDomain, JoinResult};
-use std::collections::BTreeSet;
 
 pub struct CleanAndOptimizeProcessor();
 
@@ -111,16 +114,9 @@ impl<'a> TransferFunctions for Optimizer<'a> {
                         && callee_env.is_native_or_intrinsic()
                     {
                         // Exploit knowledge about builtin functions
-                        let pool = callee_env.symbol_pool();
-                        !matches!(
-                            format!(
-                                "{}::{}",
-                                callee_env.module_env.get_name().display_full(pool),
-                                callee_env.get_name().display(pool)
-                            )
-                            .as_str(),
-                            VECTOR_BORROW_MUT | EVENT_EMIT_EVENT
-                        )
+                        !(callee_env.is_well_known(VECTOR_BORROW_MUT)
+                            || callee_env.is_well_known(EVENT_EMIT_EVENT)
+                            || callee_env.is_intrinsic_of(INTRINSIC_FUN_MAP_BORROW_MUT))
                     } else {
                         true
                     };
@@ -154,7 +150,8 @@ impl<'a> Optimizer<'a> {
 
         // Transform code.
         let mut new_instrs = vec![];
-        for (code_offset, instr) in instrs.into_iter().enumerate() {
+        let mut should_skip = BTreeSet::new();
+        for (code_offset, instr) in instrs.iter().enumerate() {
             use BorrowNode::*;
             use Bytecode::*;
             use Operation::*;
@@ -167,38 +164,73 @@ impl<'a> Optimizer<'a> {
                     true
                 }
             };
-            if !new_instrs.is_empty() {
-                // Perform peephole optimization
-                match (&new_instrs[new_instrs.len() - 1], &instr) {
-                    (Call(_, _, UnpackRef, srcs1, _), Call(_, _, PackRef, srcs2, _))
-                        if srcs1[0] == srcs2[0] =>
-                    {
-                        // skip this redundant unpack/pack pair.
-                        new_instrs.pop();
-                        continue;
-                    }
-                    (Call(_, dests, IsParent(..), srcs, _), Branch(_, _, _, tmp))
-                        if dests[0] == *tmp
-                            && !is_unwritten(code_offset as CodeOffset, &Reference(srcs[0])) =>
-                    {
-                        // skip this obsolete IsParent check
-                        new_instrs.pop();
-                        continue;
-                    }
-                    _ => {}
+
+            // Perform peephole optimization
+            match (new_instrs.last(), instr) {
+                (None, _) => {}
+                (Some(Call(_, _, UnpackRef, srcs1, _)), Call(_, _, PackRef, srcs2, _))
+                    if srcs1[0] == srcs2[0] =>
+                {
+                    // skip this redundant unpack/pack pair.
+                    new_instrs.pop();
+                    continue;
                 }
+                (Some(Call(_, dests, IsParent(..), srcs, _)), Branch(_, _, _, tmp))
+                    if dests[0] == *tmp
+                        && !is_unwritten(code_offset as CodeOffset, &Reference(srcs[0])) =>
+                {
+                    assert!(matches!(instrs[code_offset + 1], Label(..)));
+                    // skip this obsolete IsParent check when all WriteBacks in this block are redundant
+                    let mut block_cursor = code_offset + 2;
+                    let mut skip_branch = true;
+                    loop {
+                        match &instrs[block_cursor] {
+                            Call(_, _, WriteBack(_, _), srcs, _) => {
+                                if is_unwritten(block_cursor as CodeOffset, &Reference(srcs[0])) {
+                                    skip_branch = false;
+                                    break;
+                                }
+                                // skip redundant write-backs
+                                should_skip.insert(block_cursor);
+                            }
+                            Call(_, _, TraceLocal(_), _, _) => {
+                                // since the previous write-back is skipped, this trace local is redundant as well
+                                should_skip.insert(block_cursor);
+                            }
+                            _ => {
+                                break;
+                            }
+                        }
+                        block_cursor += 1;
+                    }
+                    if skip_branch {
+                        // get rid of the label as well
+                        should_skip.insert(code_offset + 1);
+                        new_instrs.pop();
+                        continue;
+                    }
+                }
+                (Some(_), _) => {}
             }
-            // Remove unnecessary WriteBack
-            match &instr {
+
+            // Do not include this instruction if it is marked as skipped
+            if should_skip.contains(&code_offset) {
+                continue;
+            }
+
+            // Other cases for skipping the instruction
+            match instr {
+                // Remove unnecessary WriteBack
                 Call(_, _, WriteBack(..), srcs, _)
                     if !is_unwritten(code_offset as CodeOffset, &Reference(srcs[0])) =>
                 {
-                    // skip this obsolete WriteBack
                     continue;
                 }
                 _ => {}
             }
-            new_instrs.push(instr);
+
+            // This instruction should be included
+            new_instrs.push(instr.clone());
         }
         new_instrs
     }

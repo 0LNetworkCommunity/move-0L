@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -44,6 +45,8 @@ pub struct FunctionInfo {
 
 #[derive(Debug, Clone)]
 pub struct NamedCompiledModule {
+    // package name metadata from compiler arguments
+    pub package_name: Option<Symbol>,
     pub address: NumericalAddress,
     pub name: Symbol,
     pub module: F::CompiledModule,
@@ -52,6 +55,8 @@ pub struct NamedCompiledModule {
 
 #[derive(Debug, Clone)]
 pub struct NamedCompiledScript {
+    // package name metadata from compiler arguments
+    pub package_name: Option<Symbol>,
     pub name: Symbol,
     pub script: F::CompiledScript,
     pub source_map: SourceMap,
@@ -92,10 +97,8 @@ pub type AnnotatedCompiledUnit = CompiledUnitEnum<AnnotatedCompiledModule, Annot
 impl AnnotatedCompiledModule {
     pub fn module_ident(&self) -> ModuleIdent {
         use crate::expansion::ast::Address;
-        let address = match self.address_name {
-            None => Address::Anonymous(sp(self.loc, self.named_module.address)),
-            Some(n) => Address::Named(n),
-        };
+        let address =
+            Address::Numerical(self.address_name, sp(self.loc, self.named_module.address));
         sp(
             self.loc,
             ModuleIdent_::new(
@@ -149,6 +152,13 @@ impl AnnotatedCompiledUnit {
         }
     }
 
+    pub fn package_name(&self) -> Option<Symbol> {
+        match self {
+            Self::Module(AnnotatedCompiledModule { named_module, .. }) => named_module.package_name,
+            Self::Script(AnnotatedCompiledScript { named_script, .. }) => named_script.package_name,
+        }
+    }
+
     pub fn loc(&self) -> &Loc {
         match self {
             Self::Module(AnnotatedCompiledModule { loc, .. })
@@ -165,6 +175,13 @@ impl CompiledUnit {
         }
     }
 
+    pub fn package_name(&self) -> Option<Symbol> {
+        match self {
+            Self::Module(NamedCompiledModule { package_name, .. })
+            | Self::Script(NamedCompiledScript { package_name, .. }) => *package_name,
+        }
+    }
+
     pub fn source_map(&self) -> &SourceMap {
         match self {
             Self::Module(NamedCompiledModule { source_map, .. })
@@ -172,15 +189,15 @@ impl CompiledUnit {
         }
     }
 
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn serialize(&self, bytecode_version: Option<u32>) -> Vec<u8> {
         let mut serialized = Vec::<u8>::new();
         match self {
-            Self::Module(NamedCompiledModule { module, .. }) => {
-                module.serialize(&mut serialized).unwrap()
-            }
-            Self::Script(NamedCompiledScript { script, .. }) => {
-                script.serialize(&mut serialized).unwrap()
-            }
+            Self::Module(NamedCompiledModule { module, .. }) => module
+                .serialize_for_version(bytecode_version, &mut serialized)
+                .unwrap(),
+            Self::Script(NamedCompiledScript { script, .. }) => script
+                .serialize_for_version(bytecode_version, &mut serialized)
+                .unwrap(),
         };
         serialized
     }

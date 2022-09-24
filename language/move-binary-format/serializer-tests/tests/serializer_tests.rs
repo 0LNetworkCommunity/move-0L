@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use move_binary_format::file_format::CompiledModule;
@@ -12,6 +13,7 @@ proptest! {
 
         let deserialized_module = CompiledModule::deserialize(&serialized)
             .expect("deserialization should work");
+
         prop_assert_eq!(module, deserialized_module);
     }
 }

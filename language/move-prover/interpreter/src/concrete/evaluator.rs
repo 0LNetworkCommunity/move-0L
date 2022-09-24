@@ -1,4 +1,5 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 //! This file implements the expression evaluation part of the stackless bytecode interpreter.
@@ -41,8 +42,7 @@ pub type EvalResult<T> = ::std::result::Result<T, BigInt>;
 // Constants
 //**************************************************************************************************
 
-const DIEM_CORE_ADDR: AccountAddress =
-    AccountAddress::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+const DIEM_CORE_ADDR: AccountAddress = AccountAddress::ONE;
 
 //**************************************************************************************************
 // Evaluation context
@@ -134,7 +134,7 @@ impl<'env> Evaluator<'env> {
                 if err == BigInt::zero() {
                     return;
                 }
-                self.record_evaluation_failure(exp, err);
+                self.record_evaluation_failure(exp, "unexpected error code");
             }
         }
     }
@@ -142,7 +142,7 @@ impl<'env> Evaluator<'env> {
     /// Check whether an assume expression holds, unless the assume expression represents a `let`
     /// binding. In that case, return the `TypedValue` of the let-binding as well as the local
     /// variable (index) the value should bind to.
-    pub fn check_assume(&self, exp: &Exp) -> Option<(TempIndex, TypedValue)> {
+    pub fn check_assume(&self, exp: &Exp) -> Option<EvalResult<(TempIndex, TypedValue)>> {
         // NOTE: `let` bindings are translated to `Assume(Identical($t, <exp>));`. This should be
         // treated as an assignment.
         if let ExpData::Call(_, Operation::Identical, args) = exp.as_ref() {
@@ -164,8 +164,10 @@ impl<'env> Evaluator<'env> {
                     self.local_state.get_type(local_idx).get_base_type()
                 );
             }
-            let local_val = self.evaluate(&args[1]).unwrap();
-            Some((local_idx, TypedValue::fuse_base(local_ty, local_val)))
+            match self.evaluate(&args[1]) {
+                Ok(val) => Some(Ok((local_idx, TypedValue::fuse_base(local_ty, val)))),
+                Err(err) => Some(Err(err)),
+            }
         } else {
             // for all other cases, treat with as an assertion
             self.check_assert(exp);
@@ -244,6 +246,15 @@ impl<'env> Evaluator<'env> {
             Value::ByteArray(v) => {
                 BaseValue::mk_vector(v.iter().map(|e| BaseValue::mk_u8(*e)).collect())
             }
+            Value::AddressArray(v) => BaseValue::mk_vector(
+                v.iter()
+                    .map(|e| {
+                        BaseValue::mk_address(
+                            AccountAddress::from_hex_literal(&format!("{:#x}", e)).unwrap(),
+                        )
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -599,7 +610,7 @@ impl<'env> Evaluator<'env> {
             }
             // case: type domain
             ExpData::Call(node_id, Operation::TypeDomain, _) => match env.get_node_type(*node_id) {
-                MTy::Type::TypeDomain(ty) => self.unroll_type_domain(&ty),
+                MTy::Type::TypeDomain(ty) => self.unroll_type_domain(&ty, exp)?,
                 _ => unreachable!(),
             },
             // case: resource domain
@@ -651,6 +662,13 @@ impl<'env> Evaluator<'env> {
             let r_vals = self.prepare_range(r_exp)?;
             vals_vec.push(r_vals);
         }
+        let choose_val_range = match kind {
+            QuantKind::Forall | QuantKind::Exists => None,
+            QuantKind::Choose | QuantKind::ChooseMin => {
+                assert_eq!(vals_vec.len(), 1);
+                Some(vals_vec[0].clone())
+            }
+        };
 
         let mut loop_results = vec![];
         for val_vec in vals_vec.into_iter().multi_cartesian_product() {
@@ -682,19 +700,49 @@ impl<'env> Evaluator<'env> {
             }
         }
 
-        let quant_result = match kind {
+        match kind {
             QuantKind::Forall => {
                 let v = loop_results.into_iter().all(|r| r.into_bool());
-                BaseValue::mk_bool(v)
+                let quant_result = BaseValue::mk_bool(v);
+                Ok(quant_result)
             }
             QuantKind::Exists => {
                 let v = loop_results.into_iter().any(|r| r.into_bool());
-                BaseValue::mk_bool(v)
+                let quant_result = BaseValue::mk_bool(v);
+                Ok(quant_result)
             }
-            // TODO (mengxu) support choose operators
-            QuantKind::Choose | QuantKind::ChooseMin => unimplemented!(),
-        };
-        Ok(quant_result)
+            QuantKind::Choose => {
+                let choose_val_range_vec = choose_val_range.unwrap();
+                let mut v_results: Vec<_> = choose_val_range_vec
+                    .into_iter()
+                    .zip(loop_results.into_iter())
+                    .filter_map(|(val, r)| if r.into_bool() { Some(val) } else { None })
+                    .collect();
+
+                match v_results.pop() {
+                    None => {
+                        self.record_evaluation_failure(body, "choose fails to satisfy a predicate");
+                        Err(Self::eval_failure_code())
+                    }
+                    Some(v) => Ok(v),
+                }
+            }
+            QuantKind::ChooseMin => {
+                let choose_val_range_vec = choose_val_range.unwrap();
+                let mut v_results: Vec<_> = choose_val_range_vec
+                    .into_iter()
+                    .zip(loop_results.into_iter())
+                    .filter_map(|(val, r)| if r.into_bool() { Some(val) } else { None })
+                    .collect();
+
+                if v_results.is_empty() {
+                    self.record_evaluation_failure(body, "choose min fails to satisfy a predicate");
+                    Err(Self::eval_failure_code())
+                } else {
+                    Ok(v_results.remove(0))
+                }
+            }
+        }
     }
 
     //
@@ -759,7 +807,7 @@ impl<'env> Evaluator<'env> {
 
         // dispatch
         let result = match (addr, module_name.as_str(), function_name.as_str()) {
-            (DIEM_CORE_ADDR, "Signer", "spec_address_of") => {
+            (DIEM_CORE_ADDR, "signer", "spec_address_of") => {
                 if cfg!(debug_assertions) {
                     assert_eq!(arg_vals.len(), 1);
                 }
@@ -1143,7 +1191,7 @@ impl<'env> Evaluator<'env> {
             None => {
                 match self
                     .global_state
-                    .get_resource(Some(true), addr, struct_inst)
+                    .get_resource_for_spec(Some(true), addr, struct_inst)
                 {
                     None => {
                         return Err(Self::eval_failure_code());
@@ -1244,15 +1292,22 @@ impl<'env> Evaluator<'env> {
         Ok(range)
     }
 
-    fn unroll_type_domain(&self, ty: &MTy::Type) -> Vec<BaseValue> {
+    fn unroll_type_domain(&self, ty: &MTy::Type, exp: &Exp) -> EvalResult<Vec<BaseValue>> {
         match ty {
-            MTy::Type::Primitive(MTy::PrimitiveType::Address) => self
+            MTy::Type::Primitive(MTy::PrimitiveType::Address) => Ok(self
                 .eval_state
                 .all_addresses()
                 .into_iter()
+                .chain(self.global_state.get_touched_addresses().iter().copied())
                 .map(BaseValue::Address)
-                .collect(),
-            _ => unreachable!(),
+                .collect()),
+            _ => {
+                self.record_evaluation_failure(
+                    exp,
+                    "enumeration of a non-address type domain is not supported",
+                );
+                Err(Self::eval_failure_code())
+            }
         }
     }
 
@@ -1268,10 +1323,10 @@ impl<'env> Evaluator<'env> {
     // utilities
     //
 
-    fn record_evaluation_failure(&self, exp: &Exp, _err: BigInt) {
+    fn record_evaluation_failure(&self, exp: &Exp, msg: &str) {
         let env = self.target.global_env();
         let loc = env.get_node_loc(exp.node_id());
-        env.error(&loc, "failed to evaluate expression");
+        env.error(&loc, &format!("failed to evaluate expression: {}", msg));
     }
 
     fn record_checking_failure(&self, exp: &Exp) {

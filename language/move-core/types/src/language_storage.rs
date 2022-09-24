@@ -1,32 +1,53 @@
 // Copyright (c) The Diem Core Contributors
+// Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     account_address::AccountAddress,
     identifier::{IdentStr, Identifier},
+    parser::{parse_struct_tag, parse_type_tag},
 };
 #[cfg(any(test, feature = "fuzzing"))]
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    str::FromStr,
+};
 
 pub const CODE_TAG: u8 = 0;
 pub const RESOURCE_TAG: u8 = 1;
 
-pub const CORE_CODE_ADDRESS: AccountAddress = AccountAddress::new([
-    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
-]);
+/// Hex address: 0x1
+pub const CORE_CODE_ADDRESS: AccountAddress = AccountAddress::ONE;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Hash, Eq, Clone, PartialOrd, Ord)]
 pub enum TypeTag {
+    // alias for compatibility with old json serialized data.
+    #[serde(rename = "bool", alias = "Bool")]
     Bool,
+    #[serde(rename = "u8", alias = "U8")]
     U8,
+    #[serde(rename = "u64", alias = "U64")]
     U64,
+    #[serde(rename = "u128", alias = "U128")]
     U128,
+    #[serde(rename = "address", alias = "Address")]
     Address,
+    #[serde(rename = "signer", alias = "Signer")]
     Signer,
+    #[serde(rename = "vector", alias = "Vector")]
     Vector(Box<TypeTag>),
+    #[serde(rename = "struct", alias = "Struct")]
     Struct(StructTag),
+}
+
+impl FromStr for TypeTag {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_type_tag(s)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Hash, Eq, Clone, PartialOrd, Ord)]
@@ -34,7 +55,8 @@ pub struct StructTag {
     pub address: AccountAddress,
     pub module: Identifier,
     pub name: Identifier,
-    // TODO: rename to "type_args" (or better "ty_args"?)
+    // alias for compatibility with old json serialized data.
+    #[serde(rename = "type_args", alias = "type_params")]
     pub type_params: Vec<TypeTag>,
 }
 
@@ -50,7 +72,15 @@ impl StructTag {
     }
 }
 
-/// Represents the intitial key into global storage where we first index by the address, and then
+impl FromStr for StructTag {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_struct_tag(s)
+    }
+}
+
+/// Represents the initial key into global storage where we first index by the address, and then
 /// the struct tag
 #[derive(Serialize, Deserialize, Debug, PartialEq, Hash, Eq, Clone, PartialOrd, Ord)]
 pub struct ResourceKey {
@@ -116,6 +146,12 @@ impl Display for ModuleId {
     }
 }
 
+impl ModuleId {
+    pub fn short_str_lossless(&self) -> String {
+        format!("0x{}::{}", self.address.short_str_lossless(), self.name)
+    }
+}
+
 impl Display for StructTag {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(
@@ -161,5 +197,26 @@ impl Display for ResourceKey {
 impl From<StructTag> for TypeTag {
     fn from(t: StructTag) -> TypeTag {
         TypeTag::Struct(t)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TypeTag;
+    use crate::{
+        account_address::AccountAddress, identifier::Identifier, language_storage::StructTag,
+    };
+
+    #[test]
+    fn test_type_tag_serde() {
+        let a = TypeTag::Struct(StructTag {
+            address: AccountAddress::ONE,
+            module: Identifier::from_utf8(("abc".as_bytes()).to_vec()).unwrap(),
+            name: Identifier::from_utf8(("abc".as_bytes()).to_vec()).unwrap(),
+            type_params: vec![TypeTag::U8],
+        });
+        let b = serde_json::to_string(&a).unwrap();
+        let c: TypeTag = serde_json::from_str(&b).unwrap();
+        assert!(a.eq(&c), "Typetag serde error")
     }
 }
