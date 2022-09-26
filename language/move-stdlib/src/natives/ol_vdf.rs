@@ -3,16 +3,19 @@
 
 #![allow(unused_variables)] // 0L todo: remove
 
+use crate::natives::helpers::make_module_natives;
 use vdf::{VDFParams, VDF};
-use move_core_types::{vm_status::StatusCode, account_address::AccountAddress};
-use move_vm_runtime::native_functions::NativeContext;
+use move_core_types::{
+    vm_status::StatusCode, account_address::AccountAddress, gas_algebra::InternalGas
+};
+use move_vm_runtime::native_functions::{NativeContext, NativeFunction};
 use move_vm_types::{
     loaded_data::runtime_types::Type,
     natives::function::NativeResult,
     pop_arg,
     values::{Reference, Value},
 };
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 // use std::convert::TryFrom;
 use move_binary_format::errors::{PartialVMError, PartialVMResult};
 use smallvec::smallvec;
@@ -22,11 +25,23 @@ use smallvec::smallvec;
 //     MOVE_VM_NATIVE_VERIFY_VDF_PROOF_ERROR_COUNT
 // };
 
+/***************************************************************************************************
+ * native fun verify
+ *
+ *   gas cost: base_cost
+ *
+ **************************************************************************************************/
+
+#[derive(Debug, Clone)]
+pub struct VerifyGasParameters {
+    pub base: InternalGas,
+}
 
 /// Rust implementation of Move's `native public fun verify(challenge: vector<u8>, 
 /// difficulty: u64, alleged_solution: vector<u8>): bool`
 pub fn native_verify(
-    context: &mut NativeContext,
+    _gas_params: &VerifyGasParameters,
+    _context: &mut NativeContext,
     _ty_args: Vec<Type>,
     mut arguments: VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
@@ -77,11 +92,32 @@ pub fn native_verify(
     Ok(NativeResult::ok(cost, return_values))
 }
 
+pub fn make_native_verify(gas_params: VerifyGasParameters) -> NativeFunction {
+    Arc::new(
+        move |context, ty_args, args| -> PartialVMResult<NativeResult> {
+            native_verify(&gas_params, context, ty_args, args)
+        },
+    )
+}
+
+/***************************************************************************************************
+ * native fun extract_address_from_challenge
+ *
+ *   gas cost: base_cost
+ *
+ **************************************************************************************************/
+
+#[derive(Debug, Clone)]
+pub struct ExtractAddressFromChallengeGasParameters {
+    pub base: InternalGas,
+}
+
 // Extracts the first 32 bits of the vdf challenge which is the auth_key
 // Auth Keys can be turned into an AccountAddress type, to be serialized to 
 // a move address type.
 pub fn native_extract_address_from_challenge(
-    context: &mut NativeContext,
+    _gas_params: &ExtractAddressFromChallengeGasParameters,
+    _context: &mut NativeContext,
     _ty_args: Vec<Type>,
     mut arguments: VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
@@ -104,4 +140,33 @@ pub fn native_extract_address_from_challenge(
     // let cost = native_gas(context.cost_table(), NativeCostIndex::VDF_PARSE, 1);
     let cost = todo!();
     Ok(NativeResult::ok(cost, return_values))
+}
+
+pub fn make_native_extract_address_from_challenge(
+    gas_params: ExtractAddressFromChallengeGasParameters
+) -> NativeFunction {
+    Arc::new(
+        move |context, ty_args, args| -> PartialVMResult<NativeResult> {
+            native_extract_address_from_challenge(&gas_params, context, ty_args, args)
+        },
+    )
+}
+
+/*************************************************************************************************
+ * module
+**************************************************************************************************/
+#[derive(Debug, Clone)]
+pub struct GasParameters {
+    pub verify: VerifyGasParameters,
+    pub extract_address_from_challenge: ExtractAddressFromChallengeGasParameters,
+}
+
+pub fn make_all(gas_params: GasParameters) -> impl Iterator<Item = (String, NativeFunction)> {
+    let natives = [
+        ("verify", make_native_verify(gas_params.verify)),
+        ("extract_address_from_challenge", 
+            make_native_extract_address_from_challenge(gas_params.extract_address_from_challenge)),
+    ];
+
+    make_module_natives(natives)
 }

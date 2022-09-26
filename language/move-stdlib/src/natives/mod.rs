@@ -29,6 +29,9 @@ pub struct GasParameters {
     pub signer: signer::GasParameters,
     pub string: string::GasParameters,
     pub vector: vector::GasParameters,
+    /////// 0L /////////
+    pub ol_vdf: ol_vdf::GasParameters,
+    pub ol_decimal: ol_decimal::GasParameters,
 
     #[cfg(feature = "testing")]
     pub unit_test: unit_test::GasParameters,
@@ -95,6 +98,17 @@ impl GasParameters {
                     unit_cost: 0.into(),
                 },
             },
+            /////// 0L /////////
+            ol_vdf: ol_vdf::GasParameters { 
+                verify: ol_vdf::VerifyGasParameters { base: 0.into() },
+                extract_address_from_challenge: 
+                    ol_vdf::ExtractAddressFromChallengeGasParameters { base: 0.into() }
+            },
+            ol_decimal: ol_decimal::GasParameters { 
+                demo: ol_decimal::DemoGasParameters { base: 0.into() },
+                pair: ol_decimal::PairGasParameters { base: 0.into() },
+                single: ol_decimal::SingleGasParameters { base: 0.into() },
+            }
         }
     }
 }
@@ -122,6 +136,9 @@ pub fn all_natives(
     {
         add_natives!("unit_test", unit_test::make_all(gas_params.unit_test));
     }
+    /////// 0L /////////
+    add_natives!("ol_vdf", ol_vdf::make_all(gas_params.ol_vdf));
+    add_natives!("ol_decimal", ol_decimal::make_all(gas_params.ol_decimal));
 
     make_table_from_iter(move_std_addr, natives)
 }

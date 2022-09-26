@@ -2,9 +2,12 @@
 
 #![allow(unused_variables)] // 0L todo
 
+use crate::natives::helpers::make_module_natives;
 use move_binary_format::errors::{PartialVMError, PartialVMResult};
-use move_core_types::vm_status::StatusCode;
-use move_vm_runtime::native_functions::NativeContext;
+use move_core_types::{
+    vm_status::StatusCode, account_address::AccountAddress, gas_algebra::InternalGas
+};
+use move_vm_runtime::native_functions::{NativeContext, NativeFunction};
 use move_vm_types::{
     loaded_data::runtime_types::Type,
     natives::function::NativeResult,
@@ -13,7 +16,7 @@ use move_vm_types::{
 };
 use rust_decimal::{self, Decimal, MathematicalOps, RoundingStrategy, prelude::ToPrimitive};
 use smallvec::smallvec;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 
 #[derive(Debug)]
 struct MoveDecimalType {
@@ -45,7 +48,20 @@ impl MoveDecimalType {
     }
 }
 
+/***************************************************************************************************
+ * native fun demo
+ *
+ *   gas cost: base_cost
+ *
+ **************************************************************************************************/
+
+#[derive(Debug, Clone)]
+pub struct DemoGasParameters {
+    pub base: InternalGas,
+}
+
 pub fn native_demo(
+    _gas_params: &DemoGasParameters,
     context: &mut NativeContext,
     _ty_args: Vec<Type>,
     mut arguments: VecDeque<Value>,
@@ -80,7 +96,28 @@ pub fn native_demo(
     ))
 }
 
+pub fn make_native_demo(gas_params: DemoGasParameters) -> NativeFunction {
+    Arc::new(
+        move |context, ty_args, args| -> PartialVMResult<NativeResult> {
+            native_demo(&gas_params, context, ty_args, args)
+        },
+    )
+}
+
+/***************************************************************************************************
+ * native fun single
+ *
+ *   gas cost: base_cost
+ *
+ **************************************************************************************************/
+
+#[derive(Debug, Clone)]
+pub struct SingleGasParameters {
+    pub base: InternalGas,
+}
+
 pub fn native_single(
+    _gas_params: &SingleGasParameters,
     context: &mut NativeContext,
     _ty_args: Vec<Type>,
     mut arguments: VecDeque<Value>,
@@ -123,7 +160,28 @@ pub fn native_single(
     ))
 }
 
+pub fn make_native_single(gas_params: SingleGasParameters) -> NativeFunction {
+    Arc::new(
+        move |context, ty_args, args| -> PartialVMResult<NativeResult> {
+            native_single(&gas_params, context, ty_args, args)
+        },
+    )
+}
+
+/***************************************************************************************************
+ * native fun pair
+ *
+ *   gas cost: base_cost
+ *
+ **************************************************************************************************/
+
+#[derive(Debug, Clone)]
+pub struct PairGasParameters {
+    pub base: InternalGas,
+}
+
 pub fn native_pair(
+    _gas_params: &PairGasParameters,
     context: &mut NativeContext,
     _ty_args: Vec<Type>,
     mut arguments: VecDeque<Value>,
@@ -200,6 +258,40 @@ pub fn native_pair(
         ],
     ))
 }
+
+pub fn make_native_pair(
+    gas_params: PairGasParameters
+) -> NativeFunction {
+    Arc::new(
+        move |context, ty_args, args| -> PartialVMResult<NativeResult> {
+            native_pair(&gas_params, context, ty_args, args)
+        },
+    )
+}
+
+/*************************************************************************************************
+ * module
+**************************************************************************************************/
+#[derive(Debug, Clone)]
+pub struct GasParameters {
+    pub demo: DemoGasParameters,
+    pub single: SingleGasParameters,
+    pub pair: PairGasParameters,
+}
+
+pub fn make_all(gas_params: GasParameters) -> impl Iterator<Item = (String, NativeFunction)> {
+    let natives = [
+        ("demo", make_native_demo(gas_params.demo)),
+        ("pair", make_native_pair(gas_params.pair)),
+        ("single", make_native_single(gas_params.single)),
+    ];
+
+    make_module_natives(natives)
+}
+
+/*************************************************************************************************
+ * test
+**************************************************************************************************/
 
 #[test]
 fn test_into_dec() {
