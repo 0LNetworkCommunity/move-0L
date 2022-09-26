@@ -29,11 +29,11 @@ anyhow = "1.0.52"
 
 ######### 0L ########
 hex = "0.4.2"
-vdf = { git = "https://github.com/OLSF/libra", rev = "df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0" }
+vdf = { git = "https://github.com/OLSF/libra", rev = "6106c0730b9953cb8021b5dfc33f9e48cf578a34" }
 rust_decimal= { version = "1.10.3", default-features = true, features = ["maths"] }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 ethers = {version = "0.1.3"}
-# diem-metrics = { git = "https://github.com/OLSF/libra", rev = "df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0" }
+# diem-metrics = { git = "https://github.com/OLSF/libra", rev = "6106c0730b9953cb8021b5dfc33f9e48cf578a34" }
 once_cell = "1.7.2"
 
 [dev-dependencies]
