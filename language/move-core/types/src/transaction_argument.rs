@@ -14,6 +14,9 @@ pub enum TransactionArgument {
     U128(u128),
     Address(AccountAddress),
     U8Vector(#[serde(with = "serde_bytes")] Vec<u8>),
+    // TODO(0L): AddressVector is not implemented anywhere. 
+    //           Though there were plans to include this in tx scripts.
+    AddressVector(Vec<AccountAddress>), //////// 0L ////////    
     Bool(bool),
 }
 
@@ -27,7 +30,11 @@ impl fmt::Debug for TransactionArgument {
             TransactionArgument::Address(address) => write!(f, "{{ADDRESS: {:?}}}", address),
             TransactionArgument::U8Vector(vector) => {
                 write!(f, "{{U8Vector: 0x{}}}", hex::encode(vector))
-            }
+            },
+            //////// 0L ////////
+            TransactionArgument::AddressVector(vector) => {
+                write!(f, "{{AddressVector: {:?}}}", vector)
+            }            
         }
     }
 }
@@ -41,6 +48,8 @@ impl From<TransactionArgument> for MoveValue {
             TransactionArgument::Address(a) => MoveValue::Address(a),
             TransactionArgument::Bool(b) => MoveValue::Bool(b),
             TransactionArgument::U8Vector(v) => MoveValue::vector_u8(v),
+            //////// 0L ////////            
+            TransactionArgument::AddressVector(v) => MoveValue::vector_address(v.clone())            
         }
     }
 }

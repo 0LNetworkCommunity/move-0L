@@ -36,14 +36,14 @@ fn native_print(
     debug_assert!(args.len() == 1);
 
     // No-op if the feature flag is not present.
-    #[cfg(feature = "testing")]
+    // #[cfg(feature = "testing")] //////// 0L ////////
     {
         let _ty = ty_args.pop().unwrap();
         let r = pop_arg!(args, Reference);
 
         let mut buf = String::new();
         print_reference(&mut buf, &r)?;
-        println!("[debug] {}", buf);
+        println!("[move print] {}", buf); //////// 0L ////////
     }
 
     Ok(NativeResult::ok(gas_params.base_cost, smallvec![]))

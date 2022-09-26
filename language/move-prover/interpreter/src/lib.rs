@@ -124,6 +124,12 @@ pub fn interpret_with_options(
             TransactionArgument::U8Vector(v) => {
                 MoveValue::Vector(v.into_iter().map(MoveValue::U8).collect())
             }
+            //////// 0L ////////
+            TransactionArgument::AddressVector(v) => {
+                MoveValue::Vector(v.into_iter().map(|a|{
+                  MoveValue::Address(a)
+                }).collect())
+            }            
         }))
         .collect();
 

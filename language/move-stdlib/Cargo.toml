@@ -27,6 +27,15 @@ sha2 = "0.9.3"
 sha3 = "0.9.1"
 anyhow = "1.0.52"
 
+######### 0L ########
+hex = "0.4.2"
+vdf = { git = "https://github.com/OLSF/libra", rev = "df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0" }
+rust_decimal= { version = "1.10.3", default-features = true, features = ["maths"] }
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+ethers = {version = "0.1.3"}
+# diem-metrics = { git = "https://github.com/OLSF/libra", rev = "df4e5d707d8ca5a156413d76e9ff0a050c9c6cb0" }
+once_cell = "1.7.2"
+
 [dev-dependencies]
 move-unit-test = { path = "../tools/move-unit-test" }
 tempfile = "3.2.0"

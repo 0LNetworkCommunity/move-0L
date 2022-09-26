@@ -23,6 +23,7 @@ move-bytecode-verifier = { path = "../../move-bytecode-verifier" }
 move-core-types = { path = "../../move-core/types" }
 move-vm-types = { path = "../types" }
 move-binary-format = { path = "../../move-binary-format" }
+# move-vm-test-utils = { path = "../../move-vm/test-utils" }
 
 [dev-dependencies]
 anyhow = "1.0.52"
