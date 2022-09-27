@@ -53,3 +53,6 @@ target-out-docker
 
 # Doc generation output
 *.md.old
+
+# //////// 0L ////////
+*.swp

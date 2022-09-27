@@ -17,6 +17,8 @@ mod helpers;
 //////// 0L ////////
 pub mod ol_vdf;
 pub mod ol_decimal;
+pub mod ol_hash;
+pub mod ol_eth_signature;
 // pub mod ol_counters;// 0L todo
 
 use move_core_types::account_address::AccountAddress;
@@ -32,6 +34,8 @@ pub struct GasParameters {
     /////// 0L /////////
     pub ol_vdf: ol_vdf::GasParameters,
     pub ol_decimal: ol_decimal::GasParameters,
+    pub ol_hash: ol_hash::GasParameters,
+    pub ol_eth_signature: ol_eth_signature::GasParameters,
 
     #[cfg(feature = "testing")]
     pub unit_test: unit_test::GasParameters,
@@ -108,7 +112,14 @@ impl GasParameters {
                 demo: ol_decimal::DemoGasParameters { base: 0.into() },
                 pair: ol_decimal::PairGasParameters { base: 0.into() },
                 single: ol_decimal::SingleGasParameters { base: 0.into() },
-            }
+            },
+            ol_hash: ol_hash::GasParameters { 
+                keccak_256: ol_hash::Keccak256GasParameters { base: 0.into() },
+            },
+            ol_eth_signature: ol_eth_signature::GasParameters { 
+                recover: ol_eth_signature::RecoverGasParameters { base: 0.into() },
+                verify: ol_eth_signature::VerifyGasParameters { base: 0.into() },
+            },            
         }
     }
 }
@@ -139,6 +150,8 @@ pub fn all_natives(
     /////// 0L /////////
     add_natives!("ol_vdf", ol_vdf::make_all(gas_params.ol_vdf));
     add_natives!("ol_decimal", ol_decimal::make_all(gas_params.ol_decimal));
+    add_natives!("ol_hash", ol_hash::make_all(gas_params.ol_hash));
+    add_natives!("ol_eth_signature", ol_eth_signature::make_all(gas_params.ol_eth_signature));
 
     make_table_from_iter(move_std_addr, natives)
 }

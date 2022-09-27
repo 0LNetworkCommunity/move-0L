@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(unused_variables)] // 0L todo
+#![allow(unused_variables)] // 0L todo: remove
 
 use crate::natives::helpers::make_module_natives;
 use move_binary_format::errors::{PartialVMError, PartialVMResult};
-use move_core_types::{
-    vm_status::StatusCode, account_address::AccountAddress, gas_algebra::InternalGas
-};
+use move_core_types::{vm_status::StatusCode,gas_algebra::InternalGas};
 use move_vm_runtime::native_functions::{NativeContext, NativeFunction};
 use move_vm_types::{
     loaded_data::runtime_types::Type,
