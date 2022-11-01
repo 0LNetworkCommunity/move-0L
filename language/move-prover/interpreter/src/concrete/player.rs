@@ -312,7 +312,14 @@ impl<'env> FunctionContext<'env> {
             }
             /////// 0L /////////
             // 0L todo diem 1.4.1
-            // Add ol_vdf and ol_decimal here?            
+            // Add ol_vdf and ol_decimal here?
+            // (DIEM_CORE_ADDR, "VDF", "extract_address_from_challenge") => {
+            //     if cfg!(debug_assertions) {
+            //         assert_eq!(srcs.len(), 1);
+            //     }
+            //     let res = self.native_vector_length(dummy_state.del_value(0));
+            //     Ok(vec![res])
+            // }
             _ => unreachable!(),
         }
     }
