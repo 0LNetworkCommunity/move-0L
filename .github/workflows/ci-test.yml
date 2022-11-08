@@ -101,7 +101,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: ./.github/actions/build-setup
-      - uses: Swatinem/rust-cache@c5ed9ba6b7e1bb8aff90d43acd2f0af4990fa57c
+      - uses: Swatinem/rust-cache@b894d59a8d236e2979b247b80dac8d053ab340dd
         with:
           key: ${{ needs.prepare.outputs.changes-target-branch }}
       - name: cargo lint
@@ -132,7 +132,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0 #get all the history!!!
       - uses: ./.github/actions/build-setup
-      - uses: Swatinem/rust-cache@c5ed9ba6b7e1bb8aff90d43acd2f0af4990fa57c
+      - uses: Swatinem/rust-cache@b894d59a8d236e2979b247b80dac8d053ab340dd
         with:
           key: ${{ needs.prepare.outputs.changes-target-branch }}
       - name: run unit tests
